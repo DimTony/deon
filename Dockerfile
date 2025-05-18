@@ -14,7 +14,4 @@ FROM mcr.microsoft.com/dotnet/aspnet:8.0
 WORKDIR /app
 COPY --from=build /app ./
 
-# Use environment variable for the connection string at runtime
-ENV ConnectionStrings__DefaultConnection=""
-
-ENTRYPOINT ["dotnet", "YourAppName.dll"]
+ENTRYPOINT ["dotnet", "portfoliobackend.dll"]

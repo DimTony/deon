@@ -1,95 +1,83 @@
-using HotelManagement.Data;
-using Microsoft.EntityFrameworkCore.Storage;
+using HotelManagement.DTOs;
+using HotelManagement.Models;
 
 namespace HotelManagement.Interfaces
 {
-    public interface IUnitOfWork : IDisposable
+    public interface IRoomService
     {
-        Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken cancellationToken = default);
-        Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
-        Task CommitTransactionAsync(CancellationToken cancellationToken = default);
-        Task RollbackTransactionAsync(CancellationToken cancellationToken = default);
+        Task<PaginatedResponseDTO<RoomDTO>> GetFilteredRoomsAsync(RoomFilterDTO filter);
+        Task<NonPaginatedResponseDTO<RoomDTO>> GetRoomByIdAsync(int id);
+        Task<NonPaginatedResponseDTO<RoomDTO>> CreateRoomAsync(CreateRoomDTO createRoomDTO);
+        Task<NonPaginatedResponseDTO<RoomDTO>> UpdateRoomAsync(int id, CreateRoomDTO updateRoomDTO);
+        Task<NonPaginatedResponseDTO<RoomDTO>> DeleteRoomAsync(int id);
+        Task<NonPaginatedResponseDTO<IEnumerable<RoomDTO>>> GetAvailableRoomsAsync(DateTime checkIn, DateTime checkOut);
+    }
+
+    public interface IRoomRepository
+    {
+        Task<IEnumerable<Room>> GetAllRoomsAsync();
+        Task<PagedList<Room>> GetFilteredRoomsAsync(RoomFilterDTO filter);
+        Task<Room?> GetRoomByIdAsync(int id);
+        Task<Room?> GetRoomByRoomNumberAsync(string roomNumber);
+        Task<Room> CreateRoomAsync(Room room);
+        Task<Room> UpdateRoomAsync(Room room);
+        Task<Room> DeleteRoomAsync(Room room);
+        Task<IEnumerable<Room>> GetAvailableRoomsAsync(DateTime checkIn, DateTime checkOut);
+        Task<bool> HasActiveBookingsAsync(int roomId);
     }
 }
 
-namespace HotelManagement.Infrastructure
+
+
+// Program.cs - Dependency Injection Registration
+
+using HotelManagement.Data;
+using HotelManagement.Interfaces;
+using HotelManagement.Infrastructure;
+using HotelManagement.Repositories;
+using HotelManagement.Services;
+using Microsoft.EntityFrameworkCore;
+
+var builder = WebApplication.CreateBuilder(args);
+
+// Add services to the container
+builder.Services.AddControllers();
+
+// Database Context
+builder.Services.AddDbContext<ApplicationDbContext>(options =>
+    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+
+// Unit of Work
+builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
+
+// Repositories
+builder.Services.AddScoped<IRoomRepository, RoomRepository>();
+
+// Services
+builder.Services.AddScoped<IRoomService, RoomService>();
+
+// AutoMapper
+builder.Services.AddAutoMapper(typeof(Program));
+
+// Logging
+builder.Services.AddLogging();
+
+// Swagger/OpenAPI
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
+
+var app = builder.Build();
+
+// Configure the HTTP request pipeline
+if (app.Environment.IsDevelopment())
 {
-    public class UnitOfWork : IUnitOfWork
-    {
-        private readonly ApplicationDbContext _context;
-        private IDbContextTransaction? _currentTransaction;
-
-        public UnitOfWork(ApplicationDbContext context)
-        {
-            _context = context;
-        }
-
-        public async Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken cancellationToken = default)
-        {
-            if (_currentTransaction != null)
-            {
-                throw new InvalidOperationException("A transaction is already in progress");
-            }
-
-            _currentTransaction = await _context.Database.BeginTransactionAsync(cancellationToken);
-            return _currentTransaction;
-        }
-
-        public async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
-        {
-            return await _context.SaveChangesAsync(cancellationToken);
-        }
-
-        public async Task CommitTransactionAsync(CancellationToken cancellationToken = default)
-        {
-            if (_currentTransaction == null)
-            {
-                throw new InvalidOperationException("No transaction in progress");
-            }
-
-            try
-            {
-                await _currentTransaction.CommitAsync(cancellationToken);
-            }
-            catch
-            {
-                await RollbackTransactionAsync(cancellationToken);
-                throw;
-            }
-            finally
-            {
-                if (_currentTransaction != null)
-                {
-                    await _currentTransaction.DisposeAsync();
-                    _currentTransaction = null;
-                }
-            }
-        }
-
-        public async Task RollbackTransactionAsync(CancellationToken cancellationToken = default)
-        {
-            if (_currentTransaction == null)
-            {
-                return;
-            }
-
-            try
-            {
-                await _currentTransaction.RollbackAsync(cancellationToken);
-            }
-            finally
-            {
-                if (_currentTransaction != null)
-                {
-                    await _currentTransaction.DisposeAsync();
-                    _currentTransaction = null;
-                }
-            }
-        }
-
-        public void Dispose()
-        {
-            _currentTransaction?.Dispose();
-        }
-    }
+    app.UseSwagger();
+    app.UseSwaggerUI();
 }
+
+app.UseHttpsRedirection();
+app.UseAuthentication();
+app.UseAuthorization();
+app.MapControllers();
+
+app.Run();

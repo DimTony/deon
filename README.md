@@ -1,105 +1,91 @@
+using HotelManagement.Booking.Models;
 using Microsoft.EntityFrameworkCore;
 
-namespace HotelManagement.Booking.DTOs
+namespace HotelManagement.Booking.Data
 {
-    public class ApiResponse<T>
+    public class ApplicationDbContext : DbContext
     {
-        public bool Success { get; set; }
-        public string Message { get; set; } = string.Empty;
-        public T? Data { get; set; }
-        public List<string> Errors { get; set; } = new List<string>();
-        public DateTime Timestamp { get; set; } = DateTime.UtcNow;
-
-        public static ApiResponse<T> SuccessResult(T data, string message = "Operation successful")
+        public ApplicationDbContext(DbContextOptions<ApplicationDbContext> options) : base(options)
         {
-            return new ApiResponse<T>
+        }
+
+        public DbSet<Models.Booking> Bookings { get; set; }
+        public DbSet<Guest> Guests { get; set; }
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            base.OnModelCreating(modelBuilder);
+
+            // Booking configuration
+            modelBuilder.Entity<Models.Booking>(entity =>
             {
-                Success = true,
-                Message = message,
-                Data = data
-            };
-        }
+                entity.HasKey(b => b.Id);
 
-        public static ApiResponse<T> FailureResult(string message, List<string>? errors = null)
-        {
-            return new ApiResponse<T>
+                entity.Property(b => b.RoomNumber)
+                    .IsRequired()
+                    .HasMaxLength(50);
+
+                entity.Property(b => b.RoomType)
+                    .IsRequired()
+                    .HasMaxLength(50);
+
+                entity.Property(b => b.PricePerNight)
+                    .HasPrecision(18, 2);
+
+                entity.Property(b => b.TotalAmount)
+                    .HasPrecision(18, 2);
+
+                entity.Property(b => b.Status)
+                    .IsRequired()
+                    .HasConversion<string>();
+
+                entity.Property(b => b.CancellationReason)
+                    .HasMaxLength(500);
+
+                // Relationship with Guest
+                entity.HasOne(b => b.Guest)
+                    .WithMany(g => g.Bookings)
+                    .HasForeignKey(b => b.GuestId)
+                    .OnDelete(DeleteBehavior.Restrict); // Prevent cascade delete
+
+                // Indexes for performance
+                entity.HasIndex(b => b.RoomId);
+                entity.HasIndex(b => b.GuestId);
+                entity.HasIndex(b => b.Status);
+                entity.HasIndex(b => b.CheckInDate);
+                entity.HasIndex(b => b.CheckOutDate);
+                entity.HasIndex(b => new { b.RoomId, b.CheckInDate, b.CheckOutDate });
+                entity.HasIndex(b => b.CreatedAt);
+            });
+
+            // Guest configuration
+            modelBuilder.Entity<Guest>(entity =>
             {
-                Success = false,
-                Message = message,
-                Errors = errors ?? new List<string>()
-            };
-        }
-    }
+                entity.HasKey(g => g.Id);
 
-    public class PagedList<T>
-    {
-        public List<T> Data { get; set; } = new List<T>();
-        public int PageNumber { get; set; }
-        public int PageSize { get; set; }
-        public int TotalCount { get; set; }
-        public int TotalPages { get; set; }
-        public bool HasPrevious => PageNumber > 1;
-        public bool HasNext => PageNumber < TotalPages;
+                entity.Property(g => g.FirstName)
+                    .IsRequired()
+                    .HasMaxLength(100);
 
-        public PagedList(List<T> items, int count, int pageNumber, int pageSize)
-        {
-            Data = items;
-            PageNumber = pageNumber;
-            PageSize = pageSize;
-            TotalCount = count;
-            TotalPages = (int)Math.Ceiling(count / (double)pageSize);
-        }
+                entity.Property(g => g.LastName)
+                    .IsRequired()
+                    .HasMaxLength(100);
 
-        public static async Task<PagedList<T>> CreateAsync(IQueryable<T> source, int pageNumber, int pageSize)
-        {
-            var count = await source.CountAsync();
-            var items = await source
-                .Skip((pageNumber - 1) * pageSize)
-                .Take(pageSize)
-                .ToListAsync();
+                entity.Property(g => g.Email)
+                    .IsRequired()
+                    .HasMaxLength(255);
 
-            return new PagedList<T>(items, count, pageNumber, pageSize);
-        }
-    }
+                entity.Property(g => g.PhoneNumber)
+                    .IsRequired()
+                    .HasMaxLength(20);
 
-    public class PaginatedResponse<T>
-    {
-        public bool Success { get; set; }
-        public string Message { get; set; } = string.Empty;
-        public List<T> Data { get; set; } = new List<T>();
-        public int PageNumber { get; set; }
-        public int PageSize { get; set; }
-        public int TotalCount { get; set; }
-        public int TotalPages { get; set; }
-        public bool HasPrevious { get; set; }
-        public bool HasNext { get; set; }
-        public List<string> Errors { get; set; } = new List<string>();
-        public DateTime Timestamp { get; set; } = DateTime.UtcNow;
+                entity.Property(g => g.Address)
+                    .HasMaxLength(500);
 
-        public static PaginatedResponse<T> Create(PagedList<T> pagedList, string message = "Operation successful")
-        {
-            return new PaginatedResponse<T>
-            {
-                Success = true,
-                Message = message,
-                Data = pagedList.Data,
-                PageNumber = pagedList.PageNumber,
-                PageSize = pagedList.PageSize,
-                TotalCount = pagedList.TotalCount,
-                TotalPages = pagedList.TotalPages,
-                HasPrevious = pagedList.HasPrevious,
-                HasNext = pagedList.HasNext
-            };
-        }
-
-        public static PaginatedResponse<T> FailureResult(string message, List<string>? errors = null)
-        {
-            return new PaginatedResponse<T>
-            {
-                Success = false,
-                Message = message,
-                Errors = errors ?? new List<string>()
-            };
+                // Unique constraint on email
+                entity.HasIndex(g => g.Email)
+                    .IsUnique();
+            });
         }
     }
 }

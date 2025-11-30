@@ -1,91 +1,95 @@
-using HotelManagement.Booking.Models;
-using Microsoft.EntityFrameworkCore;
+using HotelManagement.Booking.Data;
+using Microsoft.EntityFrameworkCore.Storage;
 
-namespace HotelManagement.Booking.Data
+namespace HotelManagement.Booking.Interfaces
 {
-    public class ApplicationDbContext : DbContext
+    public interface IUnitOfWork : IDisposable
     {
-        public ApplicationDbContext(DbContextOptions<ApplicationDbContext> options) : base(options)
+        Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken cancellationToken = default);
+        Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
+        Task CommitTransactionAsync(CancellationToken cancellationToken = default);
+        Task RollbackTransactionAsync(CancellationToken cancellationToken = default);
+    }
+}
+
+namespace HotelManagement.Booking.Infrastructure
+{
+    public class UnitOfWork : IUnitOfWork
+    {
+        private readonly ApplicationDbContext _context;
+        private IDbContextTransaction? _currentTransaction;
+
+        public UnitOfWork(ApplicationDbContext context)
         {
+            _context = context;
         }
 
-        public DbSet<Models.Booking> Bookings { get; set; }
-        public DbSet<Guest> Guests { get; set; }
-
-        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        public async Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken cancellationToken = default)
         {
-            base.OnModelCreating(modelBuilder);
-
-            // Booking configuration
-            modelBuilder.Entity<Models.Booking>(entity =>
+            if (_currentTransaction != null)
             {
-                entity.HasKey(b => b.Id);
+                throw new InvalidOperationException("A transaction is already in progress");
+            }
 
-                entity.Property(b => b.RoomNumber)
-                    .IsRequired()
-                    .HasMaxLength(50);
+            _currentTransaction = await _context.Database.BeginTransactionAsync(cancellationToken);
+            return _currentTransaction;
+        }
 
-                entity.Property(b => b.RoomType)
-                    .IsRequired()
-                    .HasMaxLength(50);
+        public async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+        {
+            return await _context.SaveChangesAsync(cancellationToken);
+        }
 
-                entity.Property(b => b.PricePerNight)
-                    .HasPrecision(18, 2);
-
-                entity.Property(b => b.TotalAmount)
-                    .HasPrecision(18, 2);
-
-                entity.Property(b => b.Status)
-                    .IsRequired()
-                    .HasConversion<string>();
-
-                entity.Property(b => b.CancellationReason)
-                    .HasMaxLength(500);
-
-                // Relationship with Guest
-                entity.HasOne(b => b.Guest)
-                    .WithMany(g => g.Bookings)
-                    .HasForeignKey(b => b.GuestId)
-                    .OnDelete(DeleteBehavior.Restrict); // Prevent cascade delete
-
-                // Indexes for performance
-                entity.HasIndex(b => b.RoomId);
-                entity.HasIndex(b => b.GuestId);
-                entity.HasIndex(b => b.Status);
-                entity.HasIndex(b => b.CheckInDate);
-                entity.HasIndex(b => b.CheckOutDate);
-                entity.HasIndex(b => new { b.RoomId, b.CheckInDate, b.CheckOutDate });
-                entity.HasIndex(b => b.CreatedAt);
-            });
-
-            // Guest configuration
-            modelBuilder.Entity<Guest>(entity =>
+        public async Task CommitTransactionAsync(CancellationToken cancellationToken = default)
+        {
+            if (_currentTransaction == null)
             {
-                entity.HasKey(g => g.Id);
+                throw new InvalidOperationException("No transaction in progress");
+            }
 
-                entity.Property(g => g.FirstName)
-                    .IsRequired()
-                    .HasMaxLength(100);
+            try
+            {
+                await _currentTransaction.CommitAsync(cancellationToken);
+            }
+            catch
+            {
+                await RollbackTransactionAsync(cancellationToken);
+                throw;
+            }
+            finally
+            {
+                if (_currentTransaction != null)
+                {
+                    await _currentTransaction.DisposeAsync();
+                    _currentTransaction = null;
+                }
+            }
+        }
 
-                entity.Property(g => g.LastName)
-                    .IsRequired()
-                    .HasMaxLength(100);
+        public async Task RollbackTransactionAsync(CancellationToken cancellationToken = default)
+        {
+            if (_currentTransaction == null)
+            {
+                return;
+            }
 
-                entity.Property(g => g.Email)
-                    .IsRequired()
-                    .HasMaxLength(255);
+            try
+            {
+                await _currentTransaction.RollbackAsync(cancellationToken);
+            }
+            finally
+            {
+                if (_currentTransaction != null)
+                {
+                    await _currentTransaction.DisposeAsync();
+                    _currentTransaction = null;
+                }
+            }
+        }
 
-                entity.Property(g => g.PhoneNumber)
-                    .IsRequired()
-                    .HasMaxLength(20);
-
-                entity.Property(g => g.Address)
-                    .HasMaxLength(500);
-
-                // Unique constraint on email
-                entity.HasIndex(g => g.Email)
-                    .IsUnique();
-            });
+        public void Dispose()
+        {
+            _currentTransaction?.Dispose();
         }
     }
 }

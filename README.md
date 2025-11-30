@@ -1,83 +1,115 @@
-using HotelManagement.DTOs;
-using HotelManagement.Models;
-
-namespace HotelManagement.Interfaces
-{
-    public interface IRoomService
+ public class BookingFilterDTO : PaginationParams
     {
-        Task<PaginatedResponseDTO<RoomDTO>> GetFilteredRoomsAsync(RoomFilterDTO filter);
-        Task<NonPaginatedResponseDTO<RoomDTO>> GetRoomByIdAsync(int id);
-        Task<NonPaginatedResponseDTO<RoomDTO>> CreateRoomAsync(CreateRoomDTO createRoomDTO);
-        Task<NonPaginatedResponseDTO<RoomDTO>> UpdateRoomAsync(int id, CreateRoomDTO updateRoomDTO);
-        Task<NonPaginatedResponseDTO<RoomDTO>> DeleteRoomAsync(int id);
-        Task<NonPaginatedResponseDTO<IEnumerable<RoomDTO>>> GetAvailableRoomsAsync(DateTime checkIn, DateTime checkOut);
+        public int? GuestId { get; set; }
+        public int? RoomId { get; set; }
+        public string? Status { get; set; }
+        public string? RoomType { get; set; }
+        public DateTime? CheckInFrom { get; set; }
+        public DateTime? CheckInTo { get; set; }
+        public DateTime? CheckOutFrom { get; set; }
+        public DateTime? CheckOutTo { get; set; }
+        public decimal? MinAmount { get; set; }
+        public decimal? MaxAmount { get; set; }
+        public DateTime? CreatedAfter { get; set; }
+        public DateTime? CreatedBefore { get; set; }
+        public string? SearchTerm { get; set; }
+        public string? SortBy { get; set; }
+        public string SortOrder { get; set; } = "desc";
     }
 
-    public interface IRoomRepository
+    public class CheckAvailabilityDTO
     {
-        Task<IEnumerable<Room>> GetAllRoomsAsync();
-        Task<PagedList<Room>> GetFilteredRoomsAsync(RoomFilterDTO filter);
-        Task<Room?> GetRoomByIdAsync(int id);
-        Task<Room?> GetRoomByRoomNumberAsync(string roomNumber);
-        Task<Room> CreateRoomAsync(Room room);
-        Task<Room> UpdateRoomAsync(Room room);
-        Task<Room> DeleteRoomAsync(Room room);
-        Task<IEnumerable<Room>> GetAvailableRoomsAsync(DateTime checkIn, DateTime checkOut);
-        Task<bool> HasActiveBookingsAsync(int roomId);
+        [Required]
+        public int RoomId { get; set; }
+
+        [Required]
+        public DateTime CheckInDate { get; set; }
+
+        [Required]
+        public DateTime CheckOutDate { get; set; }
     }
-}
 
+    public class GuestDTO
+    {
+        public int Id { get; set; }
+        public string FirstName { get; set; } = string.Empty;
+        public string LastName { get; set; } = string.Empty;
+        public string Email { get; set; } = string.Empty;
+        public string PhoneNumber { get; set; } = string.Empty;
+        public string? Address { get; set; }
+        public DateTime? DateOfBirth { get; set; }
+        public int TotalBookings { get; set; }
+    }
 
+    public class CreateGuestDTO
+    {
+        [Required]
+        [MaxLength(100)]
+        public string FirstName { get; set; } = string.Empty;
 
-// Program.cs - Dependency Injection Registration
+        [Required]
+        [MaxLength(100)]
+        public string LastName { get; set; } = string.Empty;
 
-using HotelManagement.Data;
-using HotelManagement.Interfaces;
-using HotelManagement.Infrastructure;
-using HotelManagement.Repositories;
-using HotelManagement.Services;
-using Microsoft.EntityFrameworkCore;
+        [Required]
+        [EmailAddress]
+        [MaxLength(255)]
+        public string Email { get; set; } = string.Empty;
 
-var builder = WebApplication.CreateBuilder(args);
+        [Required]
+        [Phone]
+        [MaxLength(20)]
+        public string PhoneNumber { get; set; } = string.Empty;
 
-// Add services to the container
-builder.Services.AddControllers();
+        [MaxLength(500)]
+        public string? Address { get; set; }
 
-// Database Context
-builder.Services.AddDbContext<ApplicationDbContext>(options =>
-    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+        public DateTime? DateOfBirth { get; set; }
+    }
 
-// Unit of Work
-builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
+    public class UpdateGuestDTO
+    {
+        [MaxLength(100)]
+        public string? FirstName { get; set; }
 
-// Repositories
-builder.Services.AddScoped<IRoomRepository, RoomRepository>();
+        [MaxLength(100)]
+        public string? LastName { get; set; }
 
-// Services
-builder.Services.AddScoped<IRoomService, RoomService>();
+        [EmailAddress]
+        [MaxLength(255)]
+        public string? Email { get; set; }
 
-// AutoMapper
-builder.Services.AddAutoMapper(typeof(Program));
+        [Phone]
+        [MaxLength(20)]
+        public string? PhoneNumber { get; set; }
 
-// Logging
-builder.Services.AddLogging();
+        [MaxLength(500)]
+        public string? Address { get; set; }
 
-// Swagger/OpenAPI
-builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+        public DateTime? DateOfBirth { get; set; }
+    }
 
-var app = builder.Build();
+    public class PaginationParams
+    {
+        private const int MaxPageSize = 100;
+        private int _pageSize = 10;
 
-// Configure the HTTP request pipeline
-if (app.Environment.IsDevelopment())
-{
-    app.UseSwagger();
-    app.UseSwaggerUI();
-}
+        public int PageNumber { get; set; } = 1;
 
-app.UseHttpsRedirection();
-app.UseAuthentication();
-app.UseAuthorization();
-app.MapControllers();
+        public int PageSize
+        {
+            get => _pageSize;
+            set => _pageSize = (value > MaxPageSize) ? MaxPageSize : value;
+        }
+    }
 
-app.Run();
+    // Room service DTOs (for external API calls)
+    public class RoomDTO
+    {
+        public int Id { get; set; }
+        public string RoomNumber { get; set; } = string.Empty;
+        public string RoomType { get; set; } = string.Empty;
+        public decimal PricePerNight { get; set; }
+        public int Capacity { get; set; }
+        public bool IsAvailable { get; set; }
+    }

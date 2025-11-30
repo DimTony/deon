@@ -1,5 +1,5 @@
 using HotelManagement.Booking.DTOs;
-using HotelManagement.Booking.Interfaces;
+using HotelManagement.Booking.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -8,89 +8,90 @@ namespace HotelManagement.Booking.Controllers
     [ApiController]
     [Route("api/[controller]")]
     [Authorize]
-    public class BookingsController : ControllerBase
+    public class GuestsController : ControllerBase
     {
-        private readonly IBookingService _bookingService;
-        private readonly ILogger<BookingsController> _logger;
+        private readonly IGuestService _guestService;
+        private readonly ILogger<GuestsController> _logger;
 
-        public BookingsController(IBookingService bookingService, ILogger<BookingsController> logger)
+        public GuestsController(IGuestService guestService, ILogger<GuestsController> logger)
         {
-            _bookingService = bookingService;
+            _guestService = guestService;
             _logger = logger;
         }
 
         /// <summary>
-        /// Get all bookings with filtering, sorting, and pagination
+        /// Get all guests
         /// </summary>
         [HttpGet]
-        [ProducesResponseType(typeof(PaginatedResponse<BookingDTO>), StatusCodes.Status200OK)]
-        public async Task<ActionResult<PaginatedResponse<BookingDTO>>> GetBookings([FromQuery] BookingFilterDTO filter)
+        [ProducesResponseType(typeof(ApiResponse<IEnumerable<GuestDTO>>), StatusCodes.Status200OK)]
+        public async Task<ActionResult<ApiResponse<IEnumerable<GuestDTO>>>> GetGuests()
         {
-            var response = await _bookingService.GetFilteredBookingsAsync(filter);
+            var response = await _guestService.GetAllGuestsAsync();
             return Ok(response);
         }
 
         /// <summary>
-        /// Get a specific booking by ID
+        /// Get a specific guest by ID
         /// </summary>
         [HttpGet("{id}")]
-        [ProducesResponseType(typeof(ApiResponse<BookingDTO>), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(ApiResponse<GuestDTO>), StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status404NotFound)]
-        public async Task<ActionResult<ApiResponse<BookingDTO>>> GetBooking(int id)
+        public async Task<ActionResult<ApiResponse<GuestDTO>>> GetGuest(int id)
         {
-            var response = await _bookingService.GetBookingByIdAsync(id);
+            var response = await _guestService.GetGuestByIdAsync(id);
             return response.Success ? Ok(response) : NotFound(response);
         }
 
         /// <summary>
-        /// Get all bookings for a specific guest
+        /// Get a guest by email address
         /// </summary>
-        [HttpGet("guest/{guestId}")]
-        [ProducesResponseType(typeof(ApiResponse<IEnumerable<BookingDTO>>), StatusCodes.Status200OK)]
-        public async Task<ActionResult<ApiResponse<IEnumerable<BookingDTO>>>> GetBookingsByGuest(int guestId)
+        [HttpGet("by-email/{email}")]
+        [ProducesResponseType(typeof(ApiResponse<GuestDTO>), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        public async Task<ActionResult<ApiResponse<GuestDTO>>> GetGuestByEmail(string email)
         {
-            var response = await _bookingService.GetBookingsByGuestIdAsync(guestId);
-            return Ok(response);
+            var response = await _guestService.GetGuestByEmailAsync(email);
+            return response.Success ? Ok(response) : NotFound(response);
         }
 
         /// <summary>
-        /// Create a new booking
+        /// Create a new guest
         /// </summary>
         [HttpPost]
-        [ProducesResponseType(typeof(ApiResponse<BookingDTO>), StatusCodes.Status201Created)]
+        [ProducesResponseType(typeof(ApiResponse<GuestDTO>), StatusCodes.Status201Created)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
-        public async Task<ActionResult<ApiResponse<BookingDTO>>> CreateBooking([FromBody] CreateBookingDTO createBookingDTO)
+        public async Task<ActionResult<ApiResponse<GuestDTO>>> CreateGuest([FromBody] CreateGuestDTO createGuestDTO)
         {
             if (!ModelState.IsValid)
             {
                 return BadRequest(ModelState);
             }
 
-            var response = await _bookingService.CreateBookingAsync(createBookingDTO);
+            var response = await _guestService.CreateGuestAsync(createGuestDTO);
 
             if (!response.Success)
             {
                 return BadRequest(response);
             }
 
-            return CreatedAtAction(nameof(GetBooking), new { id = response.Data!.Id }, response);
+            return CreatedAtAction(nameof(GetGuest), new { id = response.Data!.Id }, response);
         }
 
         /// <summary>
-        /// Update an existing booking
+        /// Update an existing guest
         /// </summary>
         [HttpPut("{id}")]
-        [ProducesResponseType(typeof(ApiResponse<BookingDTO>), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(ApiResponse<GuestDTO>), StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         [ProducesResponseType(StatusCodes.Status404NotFound)]
-        public async Task<ActionResult<ApiResponse<BookingDTO>>> UpdateBooking(int id, [FromBody] UpdateBookingDTO updateBookingDTO)
+        public async Task<ActionResult<ApiResponse<GuestDTO>>> UpdateGuest(int id, [FromBody] UpdateGuestDTO updateGuestDTO)
         {
             if (!ModelState.IsValid)
             {
                 return BadRequest(ModelState);
             }
 
-            var response = await _bookingService.UpdateBookingAsync(id, updateBookingDTO);
+            var response = await _guestService.UpdateGuestAsync(id, updateGuestDTO);
             
             if (!response.Success)
             {
@@ -101,122 +102,21 @@ namespace HotelManagement.Booking.Controllers
         }
 
         /// <summary>
-        /// Cancel a booking
+        /// Delete a guest (only if they have no bookings)
         /// </summary>
-        [HttpPost("{id}/cancel")]
-        [ProducesResponseType(typeof(ApiResponse<BookingDTO>), StatusCodes.Status200OK)]
-        [ProducesResponseType(StatusCodes.Status400BadRequest)]
-        [ProducesResponseType(StatusCodes.Status404NotFound)]
-        public async Task<ActionResult<ApiResponse<BookingDTO>>> CancelBooking(int id, [FromBody] CancelBookingDTO? cancelDto = null)
-        {
-            var response = await _bookingService.CancelBookingAsync(id, cancelDto?.Reason);
-            
-            if (!response.Success)
-            {
-                return response.Message.Contains("not found") ? NotFound(response) : BadRequest(response);
-            }
-
-            return Ok(response);
-        }
-
-        /// <summary>
-        /// Confirm a pending booking
-        /// </summary>
-        [HttpPost("{id}/confirm")]
-        [ProducesResponseType(typeof(ApiResponse<BookingDTO>), StatusCodes.Status200OK)]
-        [ProducesResponseType(StatusCodes.Status400BadRequest)]
-        [ProducesResponseType(StatusCodes.Status404NotFound)]
-        public async Task<ActionResult<ApiResponse<BookingDTO>>> ConfirmBooking(int id)
-        {
-            var response = await _bookingService.ConfirmBookingAsync(id);
-            
-            if (!response.Success)
-            {
-                return response.Message.Contains("not found") ? NotFound(response) : BadRequest(response);
-            }
-
-            return Ok(response);
-        }
-
-        /// <summary>
-        /// Check in a guest
-        /// </summary>
-        [HttpPost("{id}/checkin")]
-        [ProducesResponseType(typeof(ApiResponse<BookingDTO>), StatusCodes.Status200OK)]
-        [ProducesResponseType(StatusCodes.Status400BadRequest)]
-        [ProducesResponseType(StatusCodes.Status404NotFound)]
-        public async Task<ActionResult<ApiResponse<BookingDTO>>> CheckIn(int id)
-        {
-            var response = await _bookingService.CheckInAsync(id);
-            
-            if (!response.Success)
-            {
-                return response.Message.Contains("not found") ? NotFound(response) : BadRequest(response);
-            }
-
-            return Ok(response);
-        }
-
-        /// <summary>
-        /// Check out a guest
-        /// </summary>
-        [HttpPost("{id}/checkout")]
-        [ProducesResponseType(typeof(ApiResponse<BookingDTO>), StatusCodes.Status200OK)]
-        [ProducesResponseType(StatusCodes.Status400BadRequest)]
-        [ProducesResponseType(StatusCodes.Status404NotFound)]
-        public async Task<ActionResult<ApiResponse<BookingDTO>>> CheckOut(int id)
-        {
-            var response = await _bookingService.CheckOutAsync(id);
-            
-            if (!response.Success)
-            {
-                return response.Message.Contains("not found") ? NotFound(response) : BadRequest(response);
-            }
-
-            return Ok(response);
-        }
-
-        /// <summary>
-        /// Check room availability for specific dates
-        /// </summary>
-        [HttpPost("check-availability")]
+        [HttpDelete("{id}")]
         [ProducesResponseType(typeof(ApiResponse<bool>), StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
-        public async Task<ActionResult<ApiResponse<bool>>> CheckAvailability([FromBody] CheckAvailabilityDTO request)
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        public async Task<ActionResult<ApiResponse<bool>>> DeleteGuest(int id)
         {
-            if (!ModelState.IsValid)
+            var response = await _guestService.DeleteGuestAsync(id);
+            
+            if (!response.Success)
             {
-                return BadRequest(ModelState);
+                return response.Message.Contains("not found") ? NotFound(response) : BadRequest(response);
             }
 
-            var response = await _bookingService.CheckAvailabilityAsync(
-                request.RoomId,
-                request.CheckInDate,
-                request.CheckOutDate
-            );
-
-            return response.Success ? Ok(response) : BadRequest(response);
-        }
-
-        /// <summary>
-        /// Get upcoming bookings for the next N days
-        /// </summary>
-        [HttpGet("upcoming")]
-        [ProducesResponseType(typeof(ApiResponse<IEnumerable<BookingDTO>>), StatusCodes.Status200OK)]
-        public async Task<ActionResult<ApiResponse<IEnumerable<BookingDTO>>>> GetUpcomingBookings([FromQuery] int days = 7)
-        {
-            var response = await _bookingService.GetUpcomingBookingsAsync(days);
-            return Ok(response);
-        }
-
-        /// <summary>
-        /// Get currently active (checked-in) bookings
-        /// </summary>
-        [HttpGet("active")]
-        [ProducesResponseType(typeof(ApiResponse<IEnumerable<BookingDTO>>), StatusCodes.Status200OK)]
-        public async Task<ActionResult<ApiResponse<IEnumerable<BookingDTO>>>> GetActiveBookings()
-        {
-            var response = await _bookingService.GetActiveBookingsAsync();
             return Ok(response);
         }
     }

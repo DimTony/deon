@@ -1,263 +1,91 @@
-using HotelManagement.Booking.DTOs;
-
-namespace HotelManagement.Booking.Interfaces
-{
-    public interface IBookingRepository
-    {
-        Task<PagedList<Models.Booking>> GetFilteredBookingsAsync(BookingFilterDTO filter);
-        Task<Models.Booking?> GetBookingByIdAsync(int id);
-        Task<IEnumerable<Models.Booking>> GetBookingsByGuestIdAsync(int guestId);
-        Task<IEnumerable<Models.Booking>> GetBookingsByRoomIdAsync(int roomId);
-        Task<Models.Booking> CreateBookingAsync(Models.Booking booking);
-        Task<Models.Booking> UpdateBookingAsync(Models.Booking booking);
-        Task<bool> IsRoomAvailableAsync(int roomId, DateTime checkIn, DateTime checkOut, int? excludeBookingId = null);
-        Task<IEnumerable<Models.Booking>> GetUpcomingBookingsAsync(int days = 7);
-        Task<IEnumerable<Models.Booking>> GetActiveBookingsAsync();
-        Task<IEnumerable<Models.Booking>> GetBookingsByDateRangeAsync(DateTime startDate, DateTime endDate);
-    }
-}
-
-
-
 using HotelManagement.Booking.Data;
-using HotelManagement.Booking.DTOs;
-using HotelManagement.Booking.Interfaces;
 using HotelManagement.Booking.Models;
 using Microsoft.EntityFrameworkCore;
 
+namespace HotelManagement.Booking.Interfaces
+{
+    public interface IGuestRepository
+    {
+        Task<IEnumerable<Guest>> GetAllGuestsAsync();
+        Task<Guest?> GetGuestByIdAsync(int id);
+        Task<Guest?> GetGuestByEmailAsync(string email);
+        Task<Guest> CreateGuestAsync(Guest guest);
+        Task<Guest> UpdateGuestAsync(Guest guest);
+        Task<bool> DeleteGuestAsync(int id);
+        Task<bool> EmailExistsAsync(string email, int? excludeId = null);
+    }
+}
+
 namespace HotelManagement.Booking.Repositories
 {
-    public class BookingRepository : IBookingRepository
+    public class GuestRepository : Interfaces.IGuestRepository
     {
         private readonly ApplicationDbContext _context;
 
-        public BookingRepository(ApplicationDbContext context)
+        public GuestRepository(ApplicationDbContext context)
         {
             _context = context;
         }
 
-        public async Task<PagedList<Models.Booking>> GetFilteredBookingsAsync(BookingFilterDTO filter)
+        public async Task<IEnumerable<Guest>> GetAllGuestsAsync()
         {
-            var query = _context.Bookings
-                .Include(b => b.Guest)
+            return await _context.Guests
+                .Include(g => g.Bookings)
                 .AsNoTracking()
-                .AsQueryable();
-
-            query = ApplyFilters(query, filter);
-            query = ApplySorting(query, filter.SortBy, filter.SortOrder);
-
-            return await PagedList<Models.Booking>.CreateAsync(query, filter.PageNumber, filter.PageSize);
-        }
-
-        public async Task<Models.Booking?> GetBookingByIdAsync(int id)
-        {
-            return await _context.Bookings
-                .Include(b => b.Guest)
-                .FirstOrDefaultAsync(b => b.Id == id);
-        }
-
-        public async Task<IEnumerable<Models.Booking>> GetBookingsByGuestIdAsync(int guestId)
-        {
-            return await _context.Bookings
-                .Include(b => b.Guest)
-                .AsNoTracking()
-                .Where(b => b.GuestId == guestId)
-                .OrderByDescending(b => b.CheckInDate)
+                .OrderBy(g => g.LastName)
+                .ThenBy(g => g.FirstName)
                 .ToListAsync();
         }
 
-        public async Task<IEnumerable<Models.Booking>> GetBookingsByRoomIdAsync(int roomId)
+        public async Task<Guest?> GetGuestByIdAsync(int id)
         {
-            return await _context.Bookings
-                .Include(b => b.Guest)
-                .AsNoTracking()
-                .Where(b => b.RoomId == roomId)
-                .OrderByDescending(b => b.CheckInDate)
-                .ToListAsync();
+            return await _context.Guests
+                .Include(g => g.Bookings)
+                .FirstOrDefaultAsync(g => g.Id == id);
         }
 
-        public async Task<Models.Booking> CreateBookingAsync(Models.Booking booking)
+        public async Task<Guest?> GetGuestByEmailAsync(string email)
         {
-            await _context.Bookings.AddAsync(booking);
-            return booking;
+            return await _context.Guests
+                .Include(g => g.Bookings)
+                .FirstOrDefaultAsync(g => g.Email.ToLower() == email.ToLower());
         }
 
-        public async Task<Models.Booking> UpdateBookingAsync(Models.Booking booking)
+        public async Task<Guest> CreateGuestAsync(Guest guest)
         {
-            booking.UpdatedAt = DateTime.UtcNow;
-            _context.Entry(booking).State = EntityState.Modified;
-            return booking;
+            await _context.Guests.AddAsync(guest);
+            return guest;
         }
 
-        public async Task<bool> IsRoomAvailableAsync(int roomId, DateTime checkIn, DateTime checkOut, int? excludeBookingId = null)
+        public async Task<Guest> UpdateGuestAsync(Guest guest)
         {
-            var hasConflict = await _context.Bookings
-                .AsNoTracking()
-                .Where(b => b.RoomId == roomId
-                    && b.Status != BookingStatus.Cancelled
-                    && b.CheckInDate < checkOut.Date
-                    && b.CheckOutDate > checkIn.Date)
-                .Where(b => !excludeBookingId.HasValue || b.Id != excludeBookingId.Value)
-                .AnyAsync();
-
-            return !hasConflict;
+            guest.UpdatedAt = DateTime.UtcNow;
+            _context.Entry(guest).State = EntityState.Modified;
+            return guest;
         }
 
-        public async Task<IEnumerable<Models.Booking>> GetUpcomingBookingsAsync(int days = 7)
+        public async Task<bool> DeleteGuestAsync(int id)
         {
-            var startDate = DateTime.Today;
-            var endDate = startDate.AddDays(days);
+            var guest = await _context.Guests.FindAsync(id);
+            if (guest == null)
+            {
+                return false;
+            }
 
-            return await _context.Bookings
-                .Include(b => b.Guest)
-                .AsNoTracking()
-                .Where(b => b.CheckInDate >= startDate
-                    && b.CheckInDate <= endDate
-                    && b.Status != BookingStatus.Cancelled)
-                .OrderBy(b => b.CheckInDate)
-                .ToListAsync();
+            _context.Guests.Remove(guest);
+            return true;
         }
 
-        public async Task<IEnumerable<Models.Booking>> GetActiveBookingsAsync()
+        public async Task<bool> EmailExistsAsync(string email, int? excludeId = null)
         {
-            var today = DateTime.Today;
-
-            return await _context.Bookings
-                .Include(b => b.Guest)
-                .AsNoTracking()
-                .Where(b => b.CheckInDate <= today
-                    && b.CheckOutDate >= today
-                    && b.Status == BookingStatus.CheckedIn)
-                .OrderBy(b => b.CheckOutDate)
-                .ToListAsync();
-        }
-
-        public async Task<IEnumerable<Models.Booking>> GetBookingsByDateRangeAsync(DateTime startDate, DateTime endDate)
-        {
-            return await _context.Bookings
-                .Include(b => b.Guest)
-                .AsNoTracking()
-                .Where(b => b.CheckInDate <= endDate.Date && b.CheckOutDate >= startDate.Date)
-                .OrderBy(b => b.CheckInDate)
-                .ToListAsync();
-        }
-
-        private IQueryable<Models.Booking> ApplyFilters(IQueryable<Models.Booking> query, BookingFilterDTO filter)
-        {
-            if (!string.IsNullOrWhiteSpace(filter.SearchTerm))
+            var query = _context.Guests.AsNoTracking().Where(g => g.Email.ToLower() == email.ToLower());
+            
+            if (excludeId.HasValue)
             {
-                var searchTerm = filter.SearchTerm.ToLower();
-                query = query.Where(b =>
-                    b.RoomNumber.ToLower().Contains(searchTerm) ||
-                    b.Guest.FirstName.ToLower().Contains(searchTerm) ||
-                    b.Guest.LastName.ToLower().Contains(searchTerm) ||
-                    b.Guest.Email.ToLower().Contains(searchTerm)
-                );
+                query = query.Where(g => g.Id != excludeId.Value);
             }
 
-            if (filter.GuestId.HasValue)
-            {
-                query = query.Where(b => b.GuestId == filter.GuestId.Value);
-            }
-
-            if (filter.RoomId.HasValue)
-            {
-                query = query.Where(b => b.RoomId == filter.RoomId.Value);
-            }
-
-            if (!string.IsNullOrWhiteSpace(filter.Status) &&
-                Enum.TryParse<BookingStatus>(filter.Status, true, out var parsedStatus))
-            {
-                query = query.Where(b => b.Status == parsedStatus);
-            }
-
-            if (!string.IsNullOrWhiteSpace(filter.RoomType))
-            {
-                query = query.Where(b => b.RoomType.ToLower() == filter.RoomType.ToLower());
-            }
-
-            if (filter.CheckInFrom.HasValue)
-            {
-                query = query.Where(b => b.CheckInDate >= filter.CheckInFrom.Value.Date);
-            }
-
-            if (filter.CheckInTo.HasValue)
-            {
-                query = query.Where(b => b.CheckInDate <= filter.CheckInTo.Value.Date);
-            }
-
-            if (filter.CheckOutFrom.HasValue)
-            {
-                query = query.Where(b => b.CheckOutDate >= filter.CheckOutFrom.Value.Date);
-            }
-
-            if (filter.CheckOutTo.HasValue)
-            {
-                query = query.Where(b => b.CheckOutDate <= filter.CheckOutTo.Value.Date);
-            }
-
-            if (filter.MinAmount.HasValue)
-            {
-                query = query.Where(b => b.TotalAmount >= filter.MinAmount.Value);
-            }
-
-            if (filter.MaxAmount.HasValue)
-            {
-                query = query.Where(b => b.TotalAmount <= filter.MaxAmount.Value);
-            }
-
-            if (filter.CreatedAfter.HasValue)
-            {
-                query = query.Where(b => b.CreatedAt >= filter.CreatedAfter.Value);
-            }
-
-            if (filter.CreatedBefore.HasValue)
-            {
-                query = query.Where(b => b.CreatedAt <= filter.CreatedBefore.Value);
-            }
-
-            return query;
-        }
-
-        private IQueryable<Models.Booking> ApplySorting(IQueryable<Models.Booking> query, string? sortBy, string? sortOrder)
-        {
-            if (string.IsNullOrWhiteSpace(sortBy))
-            {
-                return query.OrderByDescending(b => b.CreatedAt);
-            }
-
-            var isDescending = sortOrder?.ToLower() == "desc";
-
-            return sortBy.ToLower() switch
-            {
-                "checkin" or "checkindate" => isDescending
-                    ? query.OrderByDescending(b => b.CheckInDate)
-                    : query.OrderBy(b => b.CheckInDate),
-                "checkout" or "checkoutdate" => isDescending
-                    ? query.OrderByDescending(b => b.CheckOutDate)
-                    : query.OrderBy(b => b.CheckOutDate),
-                "totalamount" or "amount" => isDescending
-                    ? query.OrderByDescending(b => b.TotalAmount)
-                    : query.OrderBy(b => b.TotalAmount),
-                "status" => isDescending
-                    ? query.OrderByDescending(b => b.Status)
-                    : query.OrderBy(b => b.Status),
-                "roomnumber" => isDescending
-                    ? query.OrderByDescending(b => b.RoomNumber)
-                    : query.OrderBy(b => b.RoomNumber),
-                "guestname" => isDescending
-                    ? query.OrderByDescending(b => b.Guest.LastName).ThenByDescending(b => b.Guest.FirstName)
-                    : query.OrderBy(b => b.Guest.LastName).ThenBy(b => b.Guest.FirstName),
-                "createdat" or "created" => isDescending
-                    ? query.OrderByDescending(b => b.CreatedAt)
-                    : query.OrderBy(b => b.CreatedAt),
-                _ => query.OrderByDescending(b => b.CreatedAt)
-            };
+            return await query.AnyAsync();
         }
     }
 }
-
-
-
-
-

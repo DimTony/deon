@@ -1,115 +1,105 @@
- public class BookingFilterDTO : PaginationParams
+using Microsoft.EntityFrameworkCore;
+
+namespace HotelManagement.Booking.DTOs
+{
+    public class ApiResponse<T>
     {
-        public int? GuestId { get; set; }
-        public int? RoomId { get; set; }
-        public string? Status { get; set; }
-        public string? RoomType { get; set; }
-        public DateTime? CheckInFrom { get; set; }
-        public DateTime? CheckInTo { get; set; }
-        public DateTime? CheckOutFrom { get; set; }
-        public DateTime? CheckOutTo { get; set; }
-        public decimal? MinAmount { get; set; }
-        public decimal? MaxAmount { get; set; }
-        public DateTime? CreatedAfter { get; set; }
-        public DateTime? CreatedBefore { get; set; }
-        public string? SearchTerm { get; set; }
-        public string? SortBy { get; set; }
-        public string SortOrder { get; set; } = "desc";
-    }
+        public bool Success { get; set; }
+        public string Message { get; set; } = string.Empty;
+        public T? Data { get; set; }
+        public List<string> Errors { get; set; } = new List<string>();
+        public DateTime Timestamp { get; set; } = DateTime.UtcNow;
 
-    public class CheckAvailabilityDTO
-    {
-        [Required]
-        public int RoomId { get; set; }
-
-        [Required]
-        public DateTime CheckInDate { get; set; }
-
-        [Required]
-        public DateTime CheckOutDate { get; set; }
-    }
-
-    public class GuestDTO
-    {
-        public int Id { get; set; }
-        public string FirstName { get; set; } = string.Empty;
-        public string LastName { get; set; } = string.Empty;
-        public string Email { get; set; } = string.Empty;
-        public string PhoneNumber { get; set; } = string.Empty;
-        public string? Address { get; set; }
-        public DateTime? DateOfBirth { get; set; }
-        public int TotalBookings { get; set; }
-    }
-
-    public class CreateGuestDTO
-    {
-        [Required]
-        [MaxLength(100)]
-        public string FirstName { get; set; } = string.Empty;
-
-        [Required]
-        [MaxLength(100)]
-        public string LastName { get; set; } = string.Empty;
-
-        [Required]
-        [EmailAddress]
-        [MaxLength(255)]
-        public string Email { get; set; } = string.Empty;
-
-        [Required]
-        [Phone]
-        [MaxLength(20)]
-        public string PhoneNumber { get; set; } = string.Empty;
-
-        [MaxLength(500)]
-        public string? Address { get; set; }
-
-        public DateTime? DateOfBirth { get; set; }
-    }
-
-    public class UpdateGuestDTO
-    {
-        [MaxLength(100)]
-        public string? FirstName { get; set; }
-
-        [MaxLength(100)]
-        public string? LastName { get; set; }
-
-        [EmailAddress]
-        [MaxLength(255)]
-        public string? Email { get; set; }
-
-        [Phone]
-        [MaxLength(20)]
-        public string? PhoneNumber { get; set; }
-
-        [MaxLength(500)]
-        public string? Address { get; set; }
-
-        public DateTime? DateOfBirth { get; set; }
-    }
-
-    public class PaginationParams
-    {
-        private const int MaxPageSize = 100;
-        private int _pageSize = 10;
-
-        public int PageNumber { get; set; } = 1;
-
-        public int PageSize
+        public static ApiResponse<T> SuccessResult(T data, string message = "Operation successful")
         {
-            get => _pageSize;
-            set => _pageSize = (value > MaxPageSize) ? MaxPageSize : value;
+            return new ApiResponse<T>
+            {
+                Success = true,
+                Message = message,
+                Data = data
+            };
+        }
+
+        public static ApiResponse<T> FailureResult(string message, List<string>? errors = null)
+        {
+            return new ApiResponse<T>
+            {
+                Success = false,
+                Message = message,
+                Errors = errors ?? new List<string>()
+            };
         }
     }
 
-    // Room service DTOs (for external API calls)
-    public class RoomDTO
+    public class PagedList<T>
     {
-        public int Id { get; set; }
-        public string RoomNumber { get; set; } = string.Empty;
-        public string RoomType { get; set; } = string.Empty;
-        public decimal PricePerNight { get; set; }
-        public int Capacity { get; set; }
-        public bool IsAvailable { get; set; }
+        public List<T> Data { get; set; } = new List<T>();
+        public int PageNumber { get; set; }
+        public int PageSize { get; set; }
+        public int TotalCount { get; set; }
+        public int TotalPages { get; set; }
+        public bool HasPrevious => PageNumber > 1;
+        public bool HasNext => PageNumber < TotalPages;
+
+        public PagedList(List<T> items, int count, int pageNumber, int pageSize)
+        {
+            Data = items;
+            PageNumber = pageNumber;
+            PageSize = pageSize;
+            TotalCount = count;
+            TotalPages = (int)Math.Ceiling(count / (double)pageSize);
+        }
+
+        public static async Task<PagedList<T>> CreateAsync(IQueryable<T> source, int pageNumber, int pageSize)
+        {
+            var count = await source.CountAsync();
+            var items = await source
+                .Skip((pageNumber - 1) * pageSize)
+                .Take(pageSize)
+                .ToListAsync();
+
+            return new PagedList<T>(items, count, pageNumber, pageSize);
+        }
     }
+
+    public class PaginatedResponse<T>
+    {
+        public bool Success { get; set; }
+        public string Message { get; set; } = string.Empty;
+        public List<T> Data { get; set; } = new List<T>();
+        public int PageNumber { get; set; }
+        public int PageSize { get; set; }
+        public int TotalCount { get; set; }
+        public int TotalPages { get; set; }
+        public bool HasPrevious { get; set; }
+        public bool HasNext { get; set; }
+        public List<string> Errors { get; set; } = new List<string>();
+        public DateTime Timestamp { get; set; } = DateTime.UtcNow;
+
+        public static PaginatedResponse<T> Create(PagedList<T> pagedList, string message = "Operation successful")
+        {
+            return new PaginatedResponse<T>
+            {
+                Success = true,
+                Message = message,
+                Data = pagedList.Data,
+                PageNumber = pagedList.PageNumber,
+                PageSize = pagedList.PageSize,
+                TotalCount = pagedList.TotalCount,
+                TotalPages = pagedList.TotalPages,
+                HasPrevious = pagedList.HasPrevious,
+                HasNext = pagedList.HasNext
+            };
+        }
+
+        public static PaginatedResponse<T> FailureResult(string message, List<string>? errors = null)
+        {
+            return new PaginatedResponse<T>
+            {
+                Success = false,
+                Message = message,
+                Errors = errors ?? new List<string>()
+            };
+        }
+    }
+}

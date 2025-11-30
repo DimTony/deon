@@ -6,6 +6,14 @@ import { useRouter } from "next/navigation";
 import { useState, FormEvent } from "react";
 import { toast } from "sonner";
 
+// Role-based redirect configuration
+const ROLE_REDIRECTS = {
+  admin: "/admin/dashboard",
+  manager: "/manager/dashboard",
+  staff: "/staff/dashboard",
+  customer: "/customer/dashboard",
+} as const;
+
 export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
@@ -33,8 +41,28 @@ export default function LoginPage() {
         return;
       }
 
-      router.push("/dashboard");
-      router.refresh();
+      // Fetch session to get user role
+      const response = await fetch("/api/auth/session");
+      const session = await response.json();
+
+      if (session?.user?.role) {
+        // Redirect based on user role
+        const redirectPath = ROLE_REDIRECTS[session.user.role as keyof typeof ROLE_REDIRECTS];
+        
+        if (redirectPath) {
+          toast.success(`Welcome back, ${session.user.name}!`);
+          router.push(redirectPath);
+          router.refresh();
+        } else {
+          // Fallback to default dashboard if role not found
+          router.push("/dashboard");
+          router.refresh();
+        }
+      } else {
+        // Fallback if no role is found
+        router.push("/dashboard");
+        router.refresh();
+      }
     } catch (error) {
       toast.error("An error occurred. Please try again.");
       setError("An error occurred. Please try again.");
@@ -155,15 +183,16 @@ export default function LoginPage() {
             {isLoading ? "Validating..." : "Login"}
           </button>
 
-          {/* {config.azureAdEnabled === "enabled" && (
-            <button
-              type="button"
-              className="w-full mt-3 border border-gray-300 hover:bg-gray-50 text-gray-700 font-medium py-2.5 px-4 rounded-md transition-colors text-sm"
-              onClick={handleSignIn}
-            >
-              Login With SSO
-            </button>
-          )} */}
+          {/* Demo credentials info */}
+          <div className="mt-4 p-3 bg-gray-50 rounded-md text-xs">
+            <p className="font-semibold mb-2">Demo Credentials:</p>
+            <div className="space-y-1 text-gray-600">
+              <p>Admin: admin@example.com / admin123</p>
+              <p>Manager: manager@example.com / manager123</p>
+              <p>Staff: staff@example.com / staff123</p>
+              <p>Customer: customer@example.com / customer123</p>
+            </div>
+          </div>
         </form>
       </div>
     </div>

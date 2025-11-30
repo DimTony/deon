@@ -1,5 +1,4 @@
 "use client";
-
 import { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { useSession } from "next-auth/react";
@@ -22,6 +21,7 @@ export default function ProtectedRouteProvider({
   const [previousAuthState, setPreviousAuthState] = useState<string | null>(
     null
   );
+
   const isPublicRoute = publicRoutes.includes(pathname);
 
   useEffect(() => {
@@ -48,7 +48,6 @@ export default function ProtectedRouteProvider({
             onClick: () => router.replace("/"),
           },
         });
-
         router.replace("/");
       }
 
@@ -73,24 +72,21 @@ export default function ProtectedRouteProvider({
       return;
     }
 
+    // Only redirect unauthenticated users from protected routes
     if (!isPublicRoute && status === "unauthenticated") {
       showWarning("Authentication Required", {
         description: "Please log in to access this page",
         duration: 5000,
       });
       router.replace("/");
-    } else if (
-      isPublicRoute &&
-      status === "authenticated" &&
-      pathname === "/"
-    ) {
-      router.replace("/dashboard");
     }
+    
+    // ✅ REMOVED THE REDIRECT FROM "/" TO "/dashboard"
+    // Let the login page handle its own role-based redirects
   }, [
     pathname,
     router,
     status,
-    auth.isAuthenticated,
     isPublicRoute,
     isInitialLoading,
   ]);
@@ -101,6 +97,3 @@ export default function ProtectedRouteProvider({
     <>{children}</>
   );
 }
-
-
-

@@ -1,85 +1,93 @@
-using Microsoft.AspNetCore.Authentication.JwtBearer;
-using Microsoft.IdentityModel.Tokens;
-using System.Text;
+using HotelManagement.Data;
+using HotelManagement.Interfaces;
+using HotelManagement.Repositories;
+using HotelManagement.Middleware;
+using HotelManagement.Services;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.OpenApi.Models; // Add this
+using System.Text.Json.Serialization;
 
-namespace HotelManagement.Middleware;
+var builder = WebApplication.CreateBuilder(args);
 
-public static class JwtAuthenticationExtensions
+// Add services to the container.
+
+// Configure JWT Authentication with extension method
+builder.Services.AddJwtAuthentication(builder.Configuration);
+
+builder.Services.AddAutoMapper(AppDomain.CurrentDomain.GetAssemblies());
+builder.Services.AddControllers();
+builder.Services.AddEndpointsApiExplorer();
+
+// Configure Swagger with JWT support
+builder.Services.AddSwaggerGen(options =>
 {
-    public static IServiceCollection AddJwtAuthentication(
-        this IServiceCollection services,
-        IConfiguration configuration)
+    options.SwaggerDoc("v1", new OpenApiInfo
     {
-        var jwtSettings = configuration.GetSection("JwtSettings");
-        var secretKey = jwtSettings["SecretKey"]
-            ?? throw new InvalidOperationException("JWT Secret Key not configured");
+        Title = "Hotel Management API",
+        Version = "v1",
+        Description = "Room Management API with JWT Authentication"
+    });
 
-        services.AddAuthentication(options =>
+    // Add JWT Authentication to Swagger
+    options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    {
+        Description = "JWT Authorization header using the Bearer scheme. Enter 'Bearer' [space] and then your token in the text input below. Example: 'Bearer eyJhbGc...'",
+        Name = "Authorization",
+        In = ParameterLocation.Header,
+        Type = SecuritySchemeType.ApiKey,
+        Scheme = "Bearer",
+        BearerFormat = "JWT"
+    });
+
+    options.AddSecurityRequirement(new OpenApiSecurityRequirement
+    {
         {
-            options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
-            options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
-        })
-        .AddJwtBearer(options =>
-        {
-            options.TokenValidationParameters = new TokenValidationParameters
+            new OpenApiSecurityScheme
             {
-                ValidateIssuerSigningKey = true,
-                IssuerSigningKey = new SymmetricSecurityKey(
-                    Encoding.UTF8.GetBytes(secretKey)
-                ),
-                ValidateIssuer = true,
-                ValidIssuer = jwtSettings["Issuer"],
-                ValidateAudience = true,
-                ValidAudience = jwtSettings["Audience"],
-                ValidateLifetime = true,
-                ClockSkew = TimeSpan.Zero // Remove default 5 minute tolerance
-            };
-
-            // Optional: Add custom event handlers
-            options.Events = new JwtBearerEvents
-            {
-                OnAuthenticationFailed = context =>
+                Reference = new OpenApiReference
                 {
-                    if (context.Exception.GetType() == typeof(SecurityTokenExpiredException))
-                    {
-                        context.Response.Headers.Add("Token-Expired", "true");
-                    }
-                    return Task.CompletedTask;
-                },
-                OnChallenge = context =>
-                {
-                    context.HandleResponse();
-                    context.Response.StatusCode = 401;
-                    context.Response.ContentType = "application/json";
-
-                    var result = System.Text.Json.JsonSerializer.Serialize(new
-                    {
-                        success = false,
-                        message = "You are not authorized to access this resource"
-                    });
-
-                    return context.Response.WriteAsync(result);
+                    Type = ReferenceType.SecurityScheme,
+                    Id = "Bearer"
                 }
-            };
-        });
+            },
+            Array.Empty<string>()
+        }
+    });
+});
 
-        services.AddAuthorization(options =>
+builder.Services.AddDbContext<ApplicationDbContext>(options =>
+    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+
+builder.Services.AddScoped<IRoomRepository, RoomRepository>();
+builder.Services.AddScoped<IRoomService, RoomService>();
+
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowAll",
+        builder =>
         {
-            // Define custom policies
-            options.AddPolicy("AdminOnly", policy =>
-                policy.RequireRole("Admin"));
-
-            options.AddPolicy("ManagerOrAdmin", policy =>
-                policy.RequireRole("Manager", "Admin"));
-
-            options.AddPolicy("AuthenticatedUser", policy =>
-                policy.RequireAuthenticatedUser());
+            builder.AllowAnyOrigin()
+                   .AllowAnyMethod()
+                   .AllowAnyHeader();
         });
+});
 
-        return services;
-    }
+var app = builder.Build();
+
+// Configure the HTTP request pipeline.
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI();
 }
 
+app.UseHttpsRedirection();
+app.UseCors("AllowAll");
+app.UseAuthentication();  // Must come before UseAuthorization
+app.UseAuthorization();
+app.MapControllers();
+
+app.Run();
 
 
 

@@ -1,123 +1,193 @@
-using HotelManagement.Booking.DTOs;
+using HotelManagement.Booking.Data;
+using HotelManagement.Booking.Infrastructure;
+using HotelManagement.Booking.Interfaces;
+using HotelManagement.Booking.Repositories;
 using HotelManagement.Booking.Services;
-using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
+using Microsoft.OpenApi.Models;
+using System.Text;
+using System.Text.Json.Serialization;
 
-namespace HotelManagement.Booking.Controllers
-{
-    [ApiController]
-    [Route("api/[controller]")]
-    [Authorize]
-    public class GuestsController : ControllerBase
+var builder = WebApplication.CreateBuilder(args);
+
+// Add services to the container.
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
     {
-        private readonly IGuestService _guestService;
-        private readonly ILogger<GuestsController> _logger;
+        options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
+        options.JsonSerializerOptions.ReferenceHandler = ReferenceHandler.IgnoreCycles;
+    });
 
-        public GuestsController(IGuestService guestService, ILogger<GuestsController> logger)
-        {
-            _guestService = guestService;
-            _logger = logger;
-        }
+builder.Services.AddEndpointsApiExplorer();
 
-        /// <summary>
-        /// Get all guests
-        /// </summary>
-        [HttpGet]
-        [ProducesResponseType(typeof(ApiResponse<IEnumerable<GuestDTO>>), StatusCodes.Status200OK)]
-        public async Task<ActionResult<ApiResponse<IEnumerable<GuestDTO>>>> GetGuests()
-        {
-            var response = await _guestService.GetAllGuestsAsync();
-            return Ok(response);
-        }
+// Configure Swagger with JWT support
+builder.Services.AddSwaggerGen(options =>
+{
+    options.SwaggerDoc("v1", new OpenApiInfo
+    {
+        Title = "Hotel Management Booking API",
+        Version = "v1",
+        Description = "Standalone Booking Microservice for Hotel Management System with JWT Authentication"
+    });
 
-        /// <summary>
-        /// Get a specific guest by ID
-        /// </summary>
-        [HttpGet("{id}")]
-        [ProducesResponseType(typeof(ApiResponse<GuestDTO>), StatusCodes.Status200OK)]
-        [ProducesResponseType(StatusCodes.Status404NotFound)]
-        public async Task<ActionResult<ApiResponse<GuestDTO>>> GetGuest(int id)
-        {
-            var response = await _guestService.GetGuestByIdAsync(id);
-            return response.Success ? Ok(response) : NotFound(response);
-        }
+    // Add JWT Authentication to Swagger
+    options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    {
+        Description = "JWT Authorization header using the Bearer scheme. Enter 'Bearer' [space] and then your token in the text input below. Example: 'Bearer eyJhbGc...'",
+        Name = "Authorization",
+        In = ParameterLocation.Header,
+        Type = SecuritySchemeType.ApiKey,
+        Scheme = "Bearer",
+        BearerFormat = "JWT"
+    });
 
-        /// <summary>
-        /// Get a guest by email address
-        /// </summary>
-        [HttpGet("by-email/{email}")]
-        [ProducesResponseType(typeof(ApiResponse<GuestDTO>), StatusCodes.Status200OK)]
-        [ProducesResponseType(StatusCodes.Status404NotFound)]
-        public async Task<ActionResult<ApiResponse<GuestDTO>>> GetGuestByEmail(string email)
+    options.AddSecurityRequirement(new OpenApiSecurityRequirement
+    {
         {
-            var response = await _guestService.GetGuestByEmailAsync(email);
-            return response.Success ? Ok(response) : NotFound(response);
-        }
-
-        /// <summary>
-        /// Create a new guest
-        /// </summary>
-        [HttpPost]
-        [ProducesResponseType(typeof(ApiResponse<GuestDTO>), StatusCodes.Status201Created)]
-        [ProducesResponseType(StatusCodes.Status400BadRequest)]
-        public async Task<ActionResult<ApiResponse<GuestDTO>>> CreateGuest([FromBody] CreateGuestDTO createGuestDTO)
-        {
-            if (!ModelState.IsValid)
+            new OpenApiSecurityScheme
             {
-                return BadRequest(ModelState);
-            }
-
-            var response = await _guestService.CreateGuestAsync(createGuestDTO);
-
-            if (!response.Success)
-            {
-                return BadRequest(response);
-            }
-
-            return CreatedAtAction(nameof(GetGuest), new { id = response.Data!.Id }, response);
+                Reference = new OpenApiReference
+                {
+                    Type = ReferenceType.SecurityScheme,
+                    Id = "Bearer"
+                }
+            },
+            Array.Empty<string>()
         }
+    });
+});
 
-        /// <summary>
-        /// Update an existing guest
-        /// </summary>
-        [HttpPut("{id}")]
-        [ProducesResponseType(typeof(ApiResponse<GuestDTO>), StatusCodes.Status200OK)]
-        [ProducesResponseType(StatusCodes.Status400BadRequest)]
-        [ProducesResponseType(StatusCodes.Status404NotFound)]
-        public async Task<ActionResult<ApiResponse<GuestDTO>>> UpdateGuest(int id, [FromBody] UpdateGuestDTO updateGuestDTO)
+// Configure Database
+builder.Services.AddDbContext<ApplicationDbContext>(options =>
+    options.UseSqlServer(
+        builder.Configuration.GetConnectionString("DefaultConnection"),
+        sqlOptions =>
         {
-            if (!ModelState.IsValid)
-            {
-                return BadRequest(ModelState);
-            }
-
-            var response = await _guestService.UpdateGuestAsync(id, updateGuestDTO);
-            
-            if (!response.Success)
-            {
-                return response.Message.Contains("not found") ? NotFound(response) : BadRequest(response);
-            }
-
-            return Ok(response);
+            sqlOptions.EnableRetryOnFailure(
+                maxRetryCount: 5,
+                maxRetryDelay: TimeSpan.FromSeconds(30),
+                errorNumbersToAdd: null
+            );
         }
+    )
+);
 
-        /// <summary>
-        /// Delete a guest (only if they have no bookings)
-        /// </summary>
-        [HttpDelete("{id}")]
-        [ProducesResponseType(typeof(ApiResponse<bool>), StatusCodes.Status200OK)]
-        [ProducesResponseType(StatusCodes.Status400BadRequest)]
-        [ProducesResponseType(StatusCodes.Status404NotFound)]
-        public async Task<ActionResult<ApiResponse<bool>>> DeleteGuest(int id)
+// Configure JWT Authentication
+var jwtSettings = builder.Configuration.GetSection("JwtSettings");
+var secretKey = jwtSettings["SecretKey"] ?? throw new InvalidOperationException("JWT Secret Key not configured");
+
+builder.Services.AddAuthentication(options =>
+{
+    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+})
+.AddJwtBearer(options =>
+{
+    options.TokenValidationParameters = new TokenValidationParameters
+    {
+        ValidateIssuerSigningKey = true,
+        ValidateIssuer = true,
+        ValidateAudience = true,
+        ValidateLifetime = true,
+        ValidIssuer = jwtSettings["Issuer"],
+        ValidAudience = jwtSettings["Audience"],
+        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secretKey)),
+        ClockSkew = TimeSpan.Zero
+    };
+
+    options.Events = new JwtBearerEvents
+    {
+        OnAuthenticationFailed = context =>
         {
-            var response = await _guestService.DeleteGuestAsync(id);
-            
-            if (!response.Success)
+            if (context.Exception.GetType() == typeof(SecurityTokenExpiredException))
             {
-                return response.Message.Contains("not found") ? NotFound(response) : BadRequest(response);
+                context.Response.Headers.Add("Token-Expired", "true");
             }
+            return Task.CompletedTask;
+        },
+        OnChallenge = context =>
+        {
+            context.HandleResponse();
+            context.Response.StatusCode = 401;
+            context.Response.ContentType = "application/json";
 
-            return Ok(response);
+            var result = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                success = false,
+                message = "You are not authorized to access this resource"
+            });
+
+            return context.Response.WriteAsync(result);
         }
-    }
+    };
+});
+
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy("AdminOnly", policy => policy.RequireRole("Admin"));
+    options.AddPolicy("ManagerOrAdmin", policy => policy.RequireRole("Manager", "Admin"));
+    options.AddPolicy("ReceptionistOrAbove", policy => policy.RequireRole("Receptionist", "Manager", "Admin"));
+});
+
+// Configure HttpClient for Room Service
+var roomServiceUrl = builder.Configuration["Services:RoomServiceUrl"] ?? "https://localhost:7192";
+builder.Services.AddHttpClient<IRoomServiceClient, RoomServiceClient>(client =>
+{
+    client.BaseAddress = new Uri(roomServiceUrl);
+    client.DefaultRequestHeaders.Add("Accept", "application/json");
+    client.Timeout = TimeSpan.FromSeconds(30);
+});
+
+// Register application services
+builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
+builder.Services.AddScoped<IBookingRepository, BookingRepository>();
+builder.Services.AddScoped<IGuestRepository, GuestRepository>();
+builder.Services.AddScoped<IBookingService, BookingService>();
+builder.Services.AddScoped<IGuestService, GuestService>();
+
+// Configure CORS
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowAll", policy =>
+    {
+        policy.AllowAnyOrigin()
+            .AllowAnyMethod()
+            .AllowAnyHeader();
+    });
+});
+
+// Configure Logging
+builder.Logging.ClearProviders();
+builder.Logging.AddConsole();
+builder.Logging.AddDebug();
+
+var app = builder.Build();
+
+// Configure the HTTP request pipeline.
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI(c =>
+    {
+        c.SwaggerEndpoint("/swagger/v1/swagger.json", "Booking API v1");
+        c.RoutePrefix = "swagger";
+    });
 }
+
+app.UseHttpsRedirection();
+app.UseCors("AllowAll");
+
+app.UseAuthentication();
+app.UseAuthorization();
+
+app.MapControllers();
+
+// Log startup information
+var logger = app.Services.GetRequiredService<ILogger<Program>>();
+logger.LogInformation("Hotel Management Booking Service started");
+logger.LogInformation("Environment: {Environment}", app.Environment.EnvironmentName);
+logger.LogInformation("Room Service URL: {RoomServiceUrl}", roomServiceUrl);
+
+app.Run();

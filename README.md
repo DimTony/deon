@@ -7,12 +7,12 @@ import { useRouter } from "next/navigation";
 import { useState, FormEvent } from "react";
 import { toast } from "sonner";
 
-// Role-based redirect configuration
-const ROLE_REDIRECTS = {
-  Admin: "/admin/dashboard",
-  AccountOfficer: "/manager/dashboard",
-  User: "/staff/dashboard",
-  SuperAdmin: "/customer/dashboard",
+// Role-based redirect configuration - MUST match UserRoles enum
+const ROLE_REDIRECTS: Record<UserRoles, string> = {
+  [UserRoles.Admin]: "/admin/dashboard",
+  [UserRoles.Manager]: "/manager/dashboard",
+  [UserRoles.Receptionist]: "/staff/dashboard",
+  [UserRoles.Guest]: "/customer/dashboard",
 } as const;
 
 export default function LoginPage() {
@@ -47,28 +47,39 @@ export default function LoginPage() {
       const session = await response.json();
 
       if (session?.user?.role) {
-        console.log("ROLE", session?.user.role);
+        // Handle if role comes as array
+        const userRole = Array.isArray(session.user.role) 
+          ? session.user.role[0] 
+          : session.user.role;
+        
+        console.log("User Role:", userRole);
+        console.log("Available redirects:", Object.keys(ROLE_REDIRECTS));
+
         // Redirect based on user role
-        const redirectPath = ROLE_REDIRECTS[session.user.role as UserRoles];
-        // ROLE_REDIRECTS[session.user.role as keyof typeof ROLE_REDIRECTS];
+        const redirectPath = ROLE_REDIRECTS[userRole as UserRoles];
 
         if (redirectPath) {
           toast.success(`Welcome back, ${session.user.name}!`);
           router.push(redirectPath);
           router.refresh();
         } else {
+          console.error(`No redirect path found for role: ${userRole}`);
+          toast.error("Invalid user role configuration");
           // Fallback to default dashboard if role not found
           router.push("/dashboard");
           router.refresh();
         }
       } else {
+        console.error("No role found in session");
         // Fallback if no role is found
         router.push("/dashboard");
         router.refresh();
       }
     } catch (error) {
+      console.error("Login error:", error);
       toast.error("An error occurred. Please try again.");
       setError("An error occurred. Please try again.");
+    } finally {
       setIsLoading(false);
     }
   };
@@ -91,7 +102,6 @@ export default function LoginPage() {
         </div>
 
         <div className="text-center mb-5">
-          {/* <span className="text-md ">Omnichannel Customer Management</span> */}
           <span className="text-md ">La Hotel</span>
         </div>
 
@@ -185,20 +195,8 @@ export default function LoginPage() {
           >
             {isLoading ? "Validating..." : "Login"}
           </button>
-
-          {/* Demo credentials info */}
         </form>
       </div>
     </div>
   );
 }
-
-
-export enum UserRoles {
-  Receptionist = "Receptionist",
-  Admin = "Admin",
-  Manager = "Manager",
-  Guest = "Guest",
-}
-
-

@@ -1,153 +1,95 @@
-using Microsoft.EntityFrameworkCore;
 using HotelManagement.Data;
-using HotelManagement.DTOs;
-using HotelManagement.Interfaces;
-using HotelManagement.Models;
+using Microsoft.EntityFrameworkCore.Storage;
 
-namespace HotelManagement.Repositories
+namespace HotelManagement.Interfaces
 {
-    public class RoomRepository : IRoomRepository
+    public interface IUnitOfWork : IDisposable
+    {
+        Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken cancellationToken = default);
+        Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
+        Task CommitTransactionAsync(CancellationToken cancellationToken = default);
+        Task RollbackTransactionAsync(CancellationToken cancellationToken = default);
+    }
+}
+
+namespace HotelManagement.Infrastructure
+{
+    public class UnitOfWork : IUnitOfWork
     {
         private readonly ApplicationDbContext _context;
+        private IDbContextTransaction? _currentTransaction;
 
-        public RoomRepository(ApplicationDbContext context)
+        public UnitOfWork(ApplicationDbContext context)
         {
             _context = context;
         }
 
-        public async Task<IEnumerable<Room>> GetAllRoomsAsync()
+        public async Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken cancellationToken = default)
         {
-            return await _context.Rooms
-                .AsNoTracking()
-                .ToListAsync();
-        }
-
-        public async Task<PagedList<Room>> GetFilteredRoomsAsync(RoomFilterDTO filter)
-        {
-            var query = _context.Rooms.AsNoTracking().AsQueryable();
-
-            query = ApplyFilters(query, filter);
-            query = ApplySorting(query, filter.SortBy, filter.SortOrder);
-
-            return await PagedList<Room>.CreateAsync(query, filter.PageNumber, filter.PageSize);
-        }
-
-        public async Task<Room?> GetRoomByIdAsync(int id)
-        {
-            return await _context.Rooms.FindAsync(id);
-        }
-
-        public async Task<Room?> GetRoomByRoomNumberAsync(string roomNumber)
-        {
-            return await _context.Rooms
-                .AsNoTracking()
-                .FirstOrDefaultAsync(r => r.RoomNumber == roomNumber);
-        }
-
-        public async Task<Room> CreateRoomAsync(Room room)
-        {
-            await _context.Rooms.AddAsync(room);
-            // Note: SaveChanges is called in the service layer via UnitOfWork
-            return room;
-        }
-
-        public async Task<Room> UpdateRoomAsync(Room room)
-        {
-            _context.Entry(room).State = EntityState.Modified;
-            // Note: SaveChanges is called in the service layer via UnitOfWork
-            return room;
-        }
-
-        public async Task<Room> DeleteRoomAsync(Room room)
-        {
-            _context.Rooms.Remove(room);
-            // Note: SaveChanges is called in the service layer via UnitOfWork
-            return room;
-        }
-
-        public async Task<IEnumerable<Room>> GetAvailableRoomsAsync(DateTime checkIn, DateTime checkOut)
-        {
-            var bookedRoomIds = await _context.Bookings
-                .AsNoTracking()
-                .Where(b => b.CheckInDate < checkOut && b.CheckOutDate > checkIn)
-                .Select(b => b.RoomId)
-                .ToListAsync();
-
-            return await _context.Rooms
-                .AsNoTracking()
-                .Where(r => !bookedRoomIds.Contains(r.Id) && r.IsAvailable)
-                .ToListAsync();
-        }
-
-        public async Task<bool> HasActiveBookingsAsync(int roomId)
-        {
-            var today = DateTime.Today;
-            return await _context.Bookings
-                .AsNoTracking()
-                .AnyAsync(b => b.RoomId == roomId && b.CheckOutDate >= today);
-        }
-
-        private IQueryable<Room> ApplyFilters(IQueryable<Room> query, RoomFilterDTO filter)
-        {
-            if (!string.IsNullOrWhiteSpace(filter.SearchTerm))
+            if (_currentTransaction != null)
             {
-                var searchTerm = filter.SearchTerm.ToLower();
-                query = query.Where(r => 
-                    r.RoomNumber.ToLower().Contains(searchTerm) ||
-                    r.RoomType.ToString().ToLower().Contains(searchTerm) ||
-                    (r.Description != null && r.Description.ToLower().Contains(searchTerm))
-                );
+                throw new InvalidOperationException("A transaction is already in progress");
             }
 
-            if (!string.IsNullOrWhiteSpace(filter.RoomType) &&
-                Enum.TryParse<RoomType>(filter.RoomType, true, out var parsedType))
-            {
-                query = query.Where(r => r.RoomType == parsedType);
-            }
-
-            if (filter.MinPrice.HasValue)
-            {
-                query = query.Where(r => r.PricePerNight >= filter.MinPrice.Value);
-            }
-
-            if (filter.MaxPrice.HasValue)
-            {
-                query = query.Where(r => r.PricePerNight <= filter.MaxPrice.Value);
-            }
-
-            if (filter.IsAvailable.HasValue)
-            {
-                query = query.Where(r => r.IsAvailable == filter.IsAvailable.Value);
-            }
-
-            return query;
+            _currentTransaction = await _context.Database.BeginTransactionAsync(cancellationToken);
+            return _currentTransaction;
         }
 
-        private IQueryable<Room> ApplySorting(IQueryable<Room> query, string? sortBy, string? sortOrder)
+        public async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
         {
-            if (string.IsNullOrWhiteSpace(sortBy))
+            return await _context.SaveChangesAsync(cancellationToken);
+        }
+
+        public async Task CommitTransactionAsync(CancellationToken cancellationToken = default)
+        {
+            if (_currentTransaction == null)
             {
-                return query.OrderBy(r => r.RoomNumber);
+                throw new InvalidOperationException("No transaction in progress");
             }
 
-            var isDescending = sortOrder?.ToLower() == "desc";
-
-            return sortBy.ToLower() switch
+            try
             {
-                "price" => isDescending
-                    ? query.OrderByDescending(r => r.PricePerNight)
-                    : query.OrderBy(r => r.PricePerNight),
-                "roomnumber" => isDescending
-                    ? query.OrderByDescending(r => r.RoomNumber)
-                    : query.OrderBy(r => r.RoomNumber),
-                "capacity" => isDescending
-                    ? query.OrderByDescending(r => r.Capacity)
-                    : query.OrderBy(r => r.Capacity),
-                "roomtype" => isDescending
-                    ? query.OrderByDescending(r => r.RoomType)
-                    : query.OrderBy(r => r.RoomType),
-                _ => query.OrderBy(r => r.RoomNumber)
-            };
+                await _currentTransaction.CommitAsync(cancellationToken);
+            }
+            catch
+            {
+                await RollbackTransactionAsync(cancellationToken);
+                throw;
+            }
+            finally
+            {
+                if (_currentTransaction != null)
+                {
+                    await _currentTransaction.DisposeAsync();
+                    _currentTransaction = null;
+                }
+            }
+        }
+
+        public async Task RollbackTransactionAsync(CancellationToken cancellationToken = default)
+        {
+            if (_currentTransaction == null)
+            {
+                return;
+            }
+
+            try
+            {
+                await _currentTransaction.RollbackAsync(cancellationToken);
+            }
+            finally
+            {
+                if (_currentTransaction != null)
+                {
+                    await _currentTransaction.DisposeAsync();
+                    _currentTransaction = null;
+                }
+            }
+        }
+
+        public void Dispose()
+        {
+            _currentTransaction?.Dispose();
         }
     }
 }

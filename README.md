@@ -1,1 +1,7 @@
- error CS1061: 'User' does not contain a definition for 'RefreshToken' and no accessible extension method 'RefreshToken' accepting a first argument of type 'User' could be found (are you missing a using directive or an assembly reference?)
+   entity.HasOne(rt => rt.User)
+           .WithMany(u => u.RefreshToken)
+           .HasForeignKey(rt => rt.UserId)
+           .OnDelete(DeleteBehavior.Cascade);
+           
+           
+           error CS1061: 'User' does not contain a definition for 'RefreshToken' and no accessible extension method 'RefreshToken' accepting a first argument of type 'User' could be found (are you missing a using directive or an assembly reference?)

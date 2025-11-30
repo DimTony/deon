@@ -1,5 +1,6 @@
 "use client";
 
+import { UserRoles } from "@/lib/types";
 import { signIn } from "next-auth/react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
@@ -8,10 +9,10 @@ import { toast } from "sonner";
 
 // Role-based redirect configuration
 const ROLE_REDIRECTS = {
-  admin: "/admin/dashboard",
-  manager: "/manager/dashboard",
-  staff: "/staff/dashboard",
-  customer: "/customer/dashboard",
+  Admin: "/admin/dashboard",
+  AccountOfficer: "/manager/dashboard",
+  User: "/staff/dashboard",
+  SuperAdmin: "/customer/dashboard",
 } as const;
 
 export default function LoginPage() {
@@ -46,9 +47,11 @@ export default function LoginPage() {
       const session = await response.json();
 
       if (session?.user?.role) {
+        console.log("ROLE", session?.user.role);
         // Redirect based on user role
-        const redirectPath = ROLE_REDIRECTS[session.user.role as keyof typeof ROLE_REDIRECTS];
-        
+        const redirectPath = ROLE_REDIRECTS[session.user.role as UserRoles];
+        // ROLE_REDIRECTS[session.user.role as keyof typeof ROLE_REDIRECTS];
+
         if (redirectPath) {
           toast.success(`Welcome back, ${session.user.name}!`);
           router.push(redirectPath);
@@ -184,17 +187,18 @@ export default function LoginPage() {
           </button>
 
           {/* Demo credentials info */}
-          <div className="mt-4 p-3 bg-gray-50 rounded-md text-xs">
-            <p className="font-semibold mb-2">Demo Credentials:</p>
-            <div className="space-y-1 text-gray-600">
-              <p>Admin: admin@example.com / admin123</p>
-              <p>Manager: manager@example.com / manager123</p>
-              <p>Staff: staff@example.com / staff123</p>
-              <p>Customer: customer@example.com / customer123</p>
-            </div>
-          </div>
         </form>
       </div>
     </div>
   );
 }
+
+
+export enum UserRoles {
+  Receptionist = "Receptionist",
+  Admin = "Admin",
+  Manager = "Manager",
+  Guest = "Guest",
+}
+
+

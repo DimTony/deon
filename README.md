@@ -1,92 +1,248 @@
-using AuthAPI.Models;
-using Microsoft.IdentityModel.Tokens;
-using System.IdentityModel.Tokens.Jwt;
-using System.Security.Claims;
-using System.Security.Cryptography;
-using System.Text;
+using AuthAPI.DTOs;
 
 namespace AuthAPI.Services;
 
-public class TokenService : ITokenService
+public interface IAuthService
 {
+    Task<AuthResponse> RegisterAsync(RegisterRequest request);
+    Task<AuthResponse> LoginAsync(LoginRequest request);
+    Task<AuthResponse> RefreshTokenAsync(string refreshToken);
+    Task<bool> RevokeTokenAsync(string refreshToken);
+}
+
+
+
+
+using AuthAPI.Data;
+using AuthAPI.DTOs;
+using AuthAPI.Models;
+using BCrypt.Net;
+using Microsoft.EntityFrameworkCore;
+
+namespace AuthAPI.Services;
+
+public class AuthService : IAuthService
+{
+    private readonly AuthDbContext _context;
+    private readonly ITokenService _tokenService;
     private readonly IConfiguration _configuration;
 
-    public TokenService(IConfiguration configuration)
+    public AuthService(AuthDbContext context, ITokenService tokenService, IConfiguration configuration)
     {
+        _context = context;
+        _tokenService = tokenService;
         _configuration = configuration;
     }
 
-    public string GenerateAccessToken(User user)
+    public async Task<AuthResponse> RegisterAsync(RegisterRequest request)
     {
-        var jwtSettings = _configuration.GetSection("JwtSettings");
-        var secretKey = jwtSettings["SecretKey"] ?? throw new InvalidOperationException("JWT Secret Key not configured");
-        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secretKey));
-        var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
-
-        var claims = new[]
+        // Check if user already exists
+        if (await _context.Users.AnyAsync(u => u.Email == request.Email))
         {
-            new Claim(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
-            new Claim(JwtRegisteredClaimNames.Email, user.Email),
-            new Claim(JwtRegisteredClaimNames.GivenName, user.FirstName),
-            new Claim(JwtRegisteredClaimNames.FamilyName, user.LastName),
-            new Claim(ClaimTypes.Role, user.Role),
-            new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
+            return new AuthResponse
+            {
+                Success = false,
+                Message = "User with this email already exists"
+            };
+        }
+
+        // Hash password
+        var passwordHash = BCrypt.Net.BCrypt.HashPassword(request.Password);
+
+        // Create user
+        var user = new User
+        {
+            Email = request.Email,
+            PasswordHash = passwordHash,
+            FirstName = request.FirstName,
+            LastName = request.LastName,
+            Role = "User",
+            IsActive = true,
+            CreatedAt = DateTime.UtcNow
         };
 
-        var expirationMinutes = int.Parse(jwtSettings["AccessTokenExpirationMinutes"] ?? "30");
+        _context.Users.Add(user);
+        await _context.SaveChangesAsync();
 
-        var token = new JwtSecurityToken(
-            issuer: jwtSettings["Issuer"],
-            audience: jwtSettings["Audience"],
-            claims: claims,
-            expires: DateTime.UtcNow.AddMinutes(expirationMinutes),
-            signingCredentials: credentials
-        );
+        // Generate tokens
+        var accessToken = _tokenService.GenerateAccessToken(user);
+        var refreshToken = _tokenService.GenerateRefreshToken();
 
-        return new JwtSecurityTokenHandler().WriteToken(token);
-    }
-
-    public string GenerateRefreshToken()
-    {
-        var randomNumber = new byte[64];
-        using var rng = RandomNumberGenerator.Create();
-        rng.GetBytes(randomNumber);
-        return Convert.ToBase64String(randomNumber);
-    }
-
-    public int? ValidateAccessToken(string token)
-    {
-        if (string.IsNullOrEmpty(token))
-            return null;
-
-        var jwtSettings = _configuration.GetSection("JwtSettings");
-        var secretKey = jwtSettings["SecretKey"] ?? throw new InvalidOperationException("JWT Secret Key not configured");
-
-        var tokenHandler = new JwtSecurityTokenHandler();
-        var key = Encoding.UTF8.GetBytes(secretKey);
-
-        try
+        // Save refresh token
+        var refreshTokenEntity = new RefreshToken
         {
-            tokenHandler.ValidateToken(token, new TokenValidationParameters
+            Token = refreshToken,
+            UserId = user.Id,
+            ExpiresAt = DateTime.UtcNow.AddDays(int.Parse(_configuration["JwtSettings:RefreshTokenExpirationDays"] ?? "7")),
+            CreatedAt = DateTime.UtcNow
+        };
+
+        _context.RefreshTokens.Add(refreshTokenEntity);
+        await _context.SaveChangesAsync();
+
+        return new AuthResponse
+        {
+            Success = true,
+            Message = "User registered successfully",
+            AccessToken = accessToken,
+            RefreshToken = refreshToken,
+            ExpiresAt = DateTime.UtcNow.AddMinutes(int.Parse(_configuration["JwtSettings:AccessTokenExpirationMinutes"] ?? "30")),
+            User = new UserDto
             {
-                ValidateIssuerSigningKey = true,
-                IssuerSigningKey = new SymmetricSecurityKey(key),
-                ValidateIssuer = true,
-                ValidIssuer = jwtSettings["Issuer"],
-                ValidateAudience = true,
-                ValidAudience = jwtSettings["Audience"],
-                ValidateLifetime = true,
-                ClockSkew = TimeSpan.Zero
-            }, out SecurityToken validatedToken);
+                Id = user.Id,
+                Email = user.Email,
+                FirstName = user.FirstName,
+                LastName = user.LastName,
+                Role = user.Role
+            }
+        };
+    }
 
-            var jwtToken = (JwtSecurityToken)validatedToken;
-            var userId = int.Parse(jwtToken.Claims.First(x => x.Subject == jwtToken.Subject).Subject);
+    public async Task<AuthResponse> LoginAsync(LoginRequest request)
+    {
+        // Find user
+        var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == request.Email);
 
-            return userId;
-        }
-        catch
+        if (user == null || !BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash))
         {
-            return null;
+            return new AuthResponse
+            {
+                Success = false,
+                Message = "Invalid email or password"
+            };
         }
+
+        if (!user.IsActive)
+        {
+            return new AuthResponse
+            {
+                Success = false,
+                Message = "Account is deactivated"
+            };
+        }
+
+        // Update last login
+        user.LastLoginAt = DateTime.UtcNow;
+
+        // Generate tokens
+        var accessToken = _tokenService.GenerateAccessToken(user);
+        var refreshToken = _tokenService.GenerateRefreshToken();
+
+        // Save refresh token
+        var refreshTokenEntity = new RefreshToken
+        {
+            Token = refreshToken,
+            UserId = user.Id,
+            ExpiresAt = DateTime.UtcNow.AddDays(int.Parse(_configuration["JwtSettings:RefreshTokenExpirationDays"] ?? "7")),
+            CreatedAt = DateTime.UtcNow
+        };
+
+        _context.RefreshTokens.Add(refreshTokenEntity);
+        await _context.SaveChangesAsync();
+
+        return new AuthResponse
+        {
+            Success = true,
+            Message = "Login successful",
+            AccessToken = accessToken,
+            RefreshToken = refreshToken,
+            ExpiresAt = DateTime.UtcNow.AddMinutes(int.Parse(_configuration["JwtSettings:AccessTokenExpirationMinutes"] ?? "30")),
+            User = new UserDto
+            {
+                Id = user.Id,
+                Email = user.Email,
+                FirstName = user.FirstName,
+                LastName = user.LastName,
+                Role = user.Role
+            }
+        };
+    }
+
+    public async Task<AuthResponse> RefreshTokenAsync(string refreshToken)
+    {
+        var storedToken = await _context.RefreshTokens
+            .Include(rt => rt.User)
+            .FirstOrDefaultAsync(rt => rt.Token == refreshToken);
+
+        if (storedToken == null)
+        {
+            return new AuthResponse
+            {
+                Success = false,
+                Message = "Invalid refresh token"
+            };
+        }
+
+        if (storedToken.IsRevoked)
+        {
+            return new AuthResponse
+            {
+                Success = false,
+                Message = "Refresh token has been revoked"
+            };
+        }
+
+        if (storedToken.ExpiresAt < DateTime.UtcNow)
+        {
+            return new AuthResponse
+            {
+                Success = false,
+                Message = "Refresh token has expired"
+            };
+        }
+
+        // Generate new tokens
+        var accessToken = _tokenService.GenerateAccessToken(storedToken.User);
+        var newRefreshToken = _tokenService.GenerateRefreshToken();
+
+        // Revoke old refresh token
+        storedToken.IsRevoked = true;
+        storedToken.RevokedReason = "Replaced with new token";
+
+        // Save new refresh token
+        var newRefreshTokenEntity = new RefreshToken
+        {
+            Token = newRefreshToken,
+            UserId = storedToken.UserId,
+            ExpiresAt = DateTime.UtcNow.AddDays(int.Parse(_configuration["JwtSettings:RefreshTokenExpirationDays"] ?? "7")),
+            CreatedAt = DateTime.UtcNow
+        };
+
+        _context.RefreshTokens.Add(newRefreshTokenEntity);
+        await _context.SaveChangesAsync();
+
+        return new AuthResponse
+        {
+            Success = true,
+            Message = "Token refreshed successfully",
+            AccessToken = accessToken,
+            RefreshToken = newRefreshToken,
+            ExpiresAt = DateTime.UtcNow.AddMinutes(int.Parse(_configuration["JwtSettings:AccessTokenExpirationMinutes"] ?? "30")),
+            User = new UserDto
+            {
+                Id = storedToken.User.Id,
+                Email = storedToken.User.Email,
+                FirstName = storedToken.User.FirstName,
+                LastName = storedToken.User.LastName,
+                Role = storedToken.User.Role
+            }
+        };
+    }
+
+    public async Task<bool> RevokeTokenAsync(string refreshToken)
+    {
+        var storedToken = await _context.RefreshTokens
+            .FirstOrDefaultAsync(rt => rt.Token == refreshToken);
+
+        if (storedToken == null || storedToken.IsRevoked)
+        {
+            return false;
+        }
+
+        storedToken.IsRevoked = true;
+        storedToken.RevokedReason = "Revoked by user";
+        await _context.SaveChangesAsync();
+
+        return true;
     }
 }

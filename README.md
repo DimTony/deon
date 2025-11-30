@@ -1,276 +1,440 @@
-using HotelManagement.Data;
+using AutoMapper;
+using Azure;
+using HotelManagement.DTOs;
 using HotelManagement.Interfaces;
-using HotelManagement.Repositories;
-using HotelManagement.Middleware;
-using HotelManagement.Services;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc;
+using System.Security.Claims;
+
+namespace HotelManagement.Controllers
+{
+    [ApiController]
+    [Route("api/[controller]")]
+    [Authorize]
+    public class RoomsController : ControllerBase
+    {
+        private readonly IMapper _mapper;
+        private readonly IRoomService _roomService;
+        private readonly ILogger<RoomsController> _logger;
+
+        public RoomsController(IRoomService roomService, IMapper mapper, ILogger<RoomsController> logger)
+        {
+            _roomService = roomService;
+            _mapper = mapper;
+            _logger = logger;
+        }
+        
+        [HttpGet]
+        public async Task<ActionResult<PaginatedResponseDTO<RoomDTO>>> GetRooms([FromQuery] RoomFilterDTO filter)
+        {
+
+            //var rooms = await _roomService.GetAllRoomsAsync();
+            //return Ok(rooms);
+            try
+            {
+                var pagedRooms = await _roomService.GetFilteredRoomsAsync(filter);
+                var roomDtos = _mapper.Map<List<RoomDTO>>(pagedRooms.Data);
+
+                var pagedList = new PagedList<RoomDTO>(
+                    roomDtos,
+                    pagedRooms.TotalCount,
+                    pagedRooms.PageNumber,
+                    pagedRooms.PageSize
+                    );
+
+                return Ok(PaginatedResponseDTO<RoomDTO>.SuccessResult(pagedList.Data, pagedList.PageNumber, pagedList.PageSize, pagedList.TotalCount ));
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, PaginatedResponseDTO<List<RoomDTO>>.FailureResult(
+                    "An error occurred while retrieving rooms",
+                    new List<string> { ex.Message }
+                    ));
+            }
+        }
+        [HttpPost]
+        public async Task<ActionResult<NonPaginatedResponseDTO<RoomDTO>>> CreateRoom([FromBody] CreateRoomDTO createRoomDTO)
+        {
+            // _logger.LogInformation("CreateRoom createRoomDTO: {@Response}", createRoomDTO);
+            try
+            {
+
+            var response = await _roomService.CreateRoomAsync(createRoomDTO);
+
+            // _logger.LogInformation("CreateRoom response: {@Response}", response);
+
+            return response;
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, NonPaginatedResponseDTO<List<RoomDTO>>.FailureResult(
+                    "An error occurred while creating room",
+                    new List<string> { ex.Message }
+                    ));
+            }
+
+        }
+        [HttpGet("{id}")]
+        public async Task<ActionResult<NonPaginatedResponseDTO<RoomDTO>>> GetRoom(int id)
+        {
+            try
+            {
+
+            var response = await _roomService.GetRoomByIdAsync(id);
+         
+            return response;
+
+            }
+             catch (Exception ex)
+            {
+                return StatusCode(500, NonPaginatedResponseDTO<List<RoomDTO>>.FailureResult(
+                    "An error occurred while creating room",
+                    new List<string> { ex.Message }
+                    ));
+            }
+        }
+
+        [HttpPut("{id}")]
+        public async Task<ActionResult<NonPaginatedResponseDTO<RoomDTO>>> UpdateRoom(int id, [FromBody] CreateRoomDTO updateRoomDTO)
+        {
+            try
+            {
+
+            var response = await _roomService.UpdateRoomAsync(id, updateRoomDTO);
+                //if (room == null) return NotFound();
+                ////return Ok(room);
+                //return Ok(room);
+                return response;
+
+
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, NonPaginatedResponseDTO<List<RoomDTO>>.FailureResult(
+                    "An error occurred while updating room",
+                    new List<string> { ex.Message }
+                    ));
+            }
+        }
+        [HttpDelete("{id}")]
+        public async Task<ActionResult<NonPaginatedResponseDTO<RoomDTO>>> DeleteRoom(int id)
+        {
+            try
+            {
+
+            var response = await _roomService.DeleteRoomAsync(id);
+                //return NoContent();
+                return response;
+
+
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, NonPaginatedResponseDTO<List<RoomDTO>>.FailureResult(
+                    "An error occurred while deleting room",
+                    new List<string> { ex.Message }
+                    ));
+            }
+        }
+        [HttpGet("available")]
+        public async Task<IActionResult> GetAvailableRooms([FromQuery] DateTime checkIn, [FromQuery] DateTime checkOut)
+        {
+            var rooms = await _roomService.GetAvailableRoomsAsync(checkIn, checkOut);
+            return Ok(rooms);
+        }
+    }
+}
+
+
+
+
+
+
+using HotelManagement.DTOs;
+using HotelManagement.Interfaces;
+using HotelManagement.Models;
+using Microsoft.AspNetCore.Authorization;
+
+namespace HotelManagement.Services
+{
+    public class RoomService : IRoomService
+    {
+        private readonly IRoomRepository _roomRepository;
+        private readonly ILogger<RoomService> _logger;
+
+        public RoomService(IRoomRepository roomRepository, ILogger<RoomService> logger)
+        {
+            _roomRepository = roomRepository;
+            _logger = logger;
+        }
+        public async Task<IEnumerable<RoomDTO>> GetAllRoomsAsync()
+        {
+            var rooms = await _roomRepository.GetAllRoomsAsync();
+            return rooms.Select(r => MapToDTO(r));
+        }
+
+        public async Task<PagedList<RoomDTO>> GetFilteredRoomsAsync(RoomFilterDTO filter)
+        {
+            var pagedRooms = await _roomRepository.GetFilteredRoomsAsync(filter);
+
+            var dtoData = pagedRooms.Data.Select(r => MapToDTO(r)).ToList();
+
+            // Return a new PagedList<RoomDTO>
+            return new PagedList<RoomDTO>(
+                dtoData,
+                pagedRooms.TotalCount,
+                pagedRooms.PageNumber,
+                pagedRooms.PageSize
+            );
+        }
+        //Task<IEnumerable<RoomDTO>> GetFilteredRoomsAsync();
+
+        public async Task<NonPaginatedResponseDTO<RoomDTO>> GetRoomByIdAsync(int id)
+        {
+            var room = await _roomRepository.GetRoomByIdAsync(id);
+
+            return room == null
+                ? NonPaginatedResponseDTO<RoomDTO>.FailureResult(
+                    "Room Not Found",
+                    new List<string>() // empty error list
+                  )
+                : NonPaginatedResponseDTO<RoomDTO>.SuccessResult(
+                    MapToDTO(room),
+                    "Room Fetched Successfully"
+                  );
+        }
+
+        public async Task<NonPaginatedResponseDTO<RoomDTO>> CreateRoomAsync(CreateRoomDTO createRoomDTO)
+        {
+            var room = new Room
+            {
+                RoomNumber = createRoomDTO.RoomNumber,
+                //Type = createRoomDTO.Type,
+                RoomType = Enum.Parse<RoomType>(createRoomDTO.RoomType),
+                PricePerNight = createRoomDTO.PricePerNight,
+                Capacity = createRoomDTO.Capacity,
+                IsAvailable = createRoomDTO.IsAvailable,
+                Description = createRoomDTO.Description
+            };
+           var createdRoom =  await _roomRepository.CreateRoomAsync(room);
+
+            // _logger.LogInformation("CreateRoomService createdRoom: {@Response}", createdRoom);
+
+            //return MapToDTO(createdRoom);
+            return NonPaginatedResponseDTO<RoomDTO>.SuccessResult(MapToDTO(createdRoom), "Room Created Successfully");
+        }
+        public async Task<NonPaginatedResponseDTO<RoomDTO>> UpdateRoomAsync(int id, CreateRoomDTO updateRoomDTO)
+        {
+            var room = await _roomRepository.GetRoomByIdAsync(id);
+            //if (room == null) return null;
+            if (room == null)
+            {
+
+                return NonPaginatedResponseDTO<RoomDTO>.FailureResult(
+                        "Room Not Found",
+                        new List<string>() // empty error list
+                      );
+            }
+            room.RoomNumber = updateRoomDTO.RoomNumber;
+            //room.Type = createRoomDTO.Type,
+            room.RoomType = Enum.Parse<RoomType>(updateRoomDTO.RoomType);
+            room.PricePerNight = updateRoomDTO.PricePerNight;
+            room.Capacity = updateRoomDTO.Capacity;
+            room.IsAvailable = updateRoomDTO.IsAvailable;
+            room.Description = updateRoomDTO.Description;
+            var updatedRoom = await _roomRepository.UpdateRoomAsync(room);
+            //return MapToDTO(updatedRoom);
+
+            return NonPaginatedResponseDTO<RoomDTO>.SuccessResult(
+                    MapToDTO(updatedRoom),
+                    "Room Updated Successfully"
+                  );
+        }
+        public async Task<NonPaginatedResponseDTO<RoomDTO>> DeleteRoomAsync(int id)
+        {
+            var room = await _roomRepository.GetRoomByIdAsync(id);
+            //if (room == null) return null;
+            if (room == null)
+            {
+
+                return NonPaginatedResponseDTO<RoomDTO>.FailureResult(
+                        "Room Not Found",
+                        new List<string>() // empty error list
+                      );
+            }
+           var deletedRoom = await _roomRepository.DeleteRoomAsync(room);
+
+            return NonPaginatedResponseDTO<RoomDTO>.SuccessResult(
+                MapToDTO(deletedRoom),
+                "Room Deleted Successfully"
+              );
+        }
+        public async Task<IEnumerable<RoomDTO>> GetAvailableRoomsAsync(DateTime checkIn, DateTime checkOut)
+        {
+            var rooms = await _roomRepository.GetAvailableRoomsAsync(checkIn, checkOut);
+            return rooms.Select(r => MapToDTO(r));
+        }
+
+        private RoomDTO MapToDTO(Room room)
+        {
+            return new RoomDTO
+            {
+                Id = room.Id,
+                RoomNumber = room.RoomNumber,
+                RoomType = room.RoomType.ToString(),
+                PricePerNight = room.PricePerNight,
+                Capacity = room.Capacity,
+                IsAvailable = room.IsAvailable,
+                Description = room.Description
+            };
+        }
+    }
+}
+
+
+
+
+
+
+
 using Microsoft.EntityFrameworkCore;
-using Microsoft.OpenApi.Models; // Add this
-using System.Text.Json.Serialization;
+using HotelManagement.Data;
+using HotelManagement.DTOs;
+using HotelManagement.Interfaces;
+using HotelManagement.Models;
 
-var builder = WebApplication.CreateBuilder(args);
-
-// Add services to the container.
-
-// Configure JWT Authentication with extension method
-builder.Services.AddJwtAuthentication(builder.Configuration);
-
-builder.Services.AddAutoMapper(AppDomain.CurrentDomain.GetAssemblies());
-builder.Services.AddControllers();
-builder.Services.AddEndpointsApiExplorer();
-
-// Configure Swagger with JWT support
-builder.Services.AddSwaggerGen(options =>
+namespace HotelManagement.Repositories
 {
-    options.SwaggerDoc("v1", new OpenApiInfo
+    public class RoomRepository : IRoomRepository
     {
-        Title = "Hotel Management API",
-        Version = "v1",
-        Description = "Room Management API with JWT Authentication"
-    });
-
-    // Add JWT Authentication to Swagger
-    options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
-    {
-        Description = "JWT Authorization header using the Bearer scheme. Enter 'Bearer' [space] and then your token in the text input below. Example: 'Bearer eyJhbGc...'",
-        Name = "Authorization",
-        In = ParameterLocation.Header,
-        Type = SecuritySchemeType.ApiKey,
-        Scheme = "Bearer",
-        BearerFormat = "JWT"
-    });
-
-    options.AddSecurityRequirement(new OpenApiSecurityRequirement
-    {
+        private readonly ApplicationDbContext _context;
+        public RoomRepository(ApplicationDbContext context)
         {
-            new OpenApiSecurityScheme
-            {
-                Reference = new OpenApiReference
-                {
-                    Type = ReferenceType.SecurityScheme,
-                    Id = "Bearer"
-                }
-            },
-            Array.Empty<string>()
+            _context = context;
         }
-    });
-});
-
-builder.Services.AddDbContext<ApplicationDbContext>(options =>
-    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
-
-builder.Services.AddScoped<IRoomRepository, RoomRepository>();
-builder.Services.AddScoped<IRoomService, RoomService>();
-
-builder.Services.AddCors(options =>
-{
-    options.AddPolicy("AllowAll",
-        builder =>
+        public async Task<IEnumerable<Room>> GetAllRoomsAsync()
         {
-            builder.AllowAnyOrigin()
-                   .AllowAnyMethod()
-                   .AllowAnyHeader();
-        });
-});
+            return await _context.Rooms.ToListAsync();
+        }
+        public async Task<PagedList<Room>> GetFilteredRoomsAsync(RoomFilterDTO filter)
+        {
+            var query = _context.Rooms.AsQueryable();
 
-var app = builder.Build();
+            query = ApplyFilters(query, filter);
 
-// Configure the HTTP request pipeline.
-if (app.Environment.IsDevelopment())
-{
-    app.UseSwagger();
-    app.UseSwaggerUI();
+            query = ApplySorting(query, filter.SortBy, filter.SortOrder);
+
+            return await PagedList<Room>.CreateAsync(query, filter.PageNumber, filter.PageSize);
+        }
+        public async Task<Room> GetRoomByIdAsync(int id)
+        {
+            return await _context.Rooms.FindAsync(id);
+        }
+        public async Task<Room> CreateRoomAsync(Room room)
+        {
+            _context.Rooms.Add(room);
+            await _context.SaveChangesAsync();
+            return room;
+        }
+        public async Task<Room> UpdateRoomAsync(Room room)
+        {
+            //_context.Rooms.Update(room);
+            _context.Entry(room).State = EntityState.Modified;
+            await _context.SaveChangesAsync();
+            return room;
+        }
+        public async Task<Room> DeleteRoomAsync(Room room)
+        {
+            _context.Rooms.Remove(room);
+            await _context.SaveChangesAsync();
+            return room;
+        }
+        public async Task<IEnumerable<Room>> GetAvailableRoomsAsync(DateTime checkIn, DateTime checkOut)
+        {
+            var bookedRoomIds = await _context.Bookings
+                .Where(b => b.CheckInDate < checkOut && b.CheckOutDate > checkIn)
+                .Select(b => b.RoomId)
+                .ToListAsync();
+            return await _context.Rooms
+                .Where(r => !bookedRoomIds.Contains(r.Id) && r.IsAvailable)
+                .ToListAsync();
+        }
+        private IQueryable<Room> ApplyFilters(IQueryable<Room> query, RoomFilterDTO filter)
+        {
+            if (!string.IsNullOrWhiteSpace(filter.SearchTerm))
+            {
+                var searchTerm = filter.SearchTerm.ToLower();
+                query = query.Where(r => r.RoomNumber.ToLower().Contains(searchTerm) ||
+                r.RoomType.ToString().ToLower().Contains(searchTerm) ||
+                r.Description.ToLower().Contains(searchTerm)
+                );
+            }
+
+            if (!string.IsNullOrWhiteSpace(filter.RoomType) &&
+                Enum.TryParse<RoomType>(filter.RoomType, true, out var parsedType))
+            {
+                query = query.Where(r => r.RoomType == parsedType);
+            }
+
+            if (filter.MinPrice.HasValue)
+            {
+                query = query.Where(r => r.PricePerNight >= filter.MinPrice.Value);
+            }
+
+            if (filter.MaxPrice.HasValue)
+            {
+                query = query.Where(r => r.PricePerNight >= filter.MaxPrice.Value);
+            }
+
+            if (filter.IsAvailable.HasValue)
+            {
+                query = query.Where(r => r.IsAvailable == filter.IsAvailable.Value);
+            }
+
+            //if (filter.Floor.HasValue)
+            //{
+            //    some logic for room floor filtering
+            //    query = query.Where(r => r.Floor >= filter.Floor.Value);
+            //}
+
+            //if (filter.AvailableFrom.HasValue)
+            //{
+            // some logic from AvailableFrom
+            //    query = query.Where(r => r.PricePerNight >= filter.AvailableFrom.Value);
+            //}
+
+            //if (filter.AvailableTo.HasValue)
+            //{
+            // some logic from AvailableTo
+            //    query = query.Where(r => r.PricePerNight >= filter.AvailableTo.Value);
+            //}
+
+            return query;
+        }
+
+        private IQueryable<Room> ApplySorting(IQueryable<Room> query, string sortBy, string sortOrder)
+        {
+            if (string.IsNullOrWhiteSpace(sortBy))
+            {
+                return query.OrderBy(r => r.RoomNumber);
+            }
+
+            var isDescending = sortOrder?.ToLower() == "desc";
+
+            query = sortBy.ToLower() switch
+            {
+                "price" => isDescending
+                    ? query.OrderByDescending(r => r.PricePerNight)
+                    : query.OrderBy(r => r.PricePerNight)
+            };
+
+            return query;
+        }
+    }
 }
 
-app.UseHttpsRedirection();
-app.UseCors("AllowAll");
-app.UseAuthentication();  // Must come before UseAuthorization
-app.UseAuthorization();
-app.MapControllers();
-
-app.Run();
 
 
 
 
-{
-  "info": {
-    "name": "Auth API Collection",
-    "description": "Collection for testing Auth API endpoints",
-    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
-  },
-  "variable": [
-    {
-      "key": "baseUrl",
-      "value": "https://localhost:5001",
-      "type": "string"
-    },
-    {
-      "key": "accessToken",
-      "value": "",
-      "type": "string"
-    },
-    {
-      "key": "refreshToken",
-      "value": "",
-      "type": "string"
-    }
-  ],
-  "item": [
-    {
-      "name": "Auth",
-      "item": [
-        {
-          "name": "Register User",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "exec": [
-                  "if (pm.response.code === 200) {",
-                  "    var jsonData = pm.response.json();",
-                  "    pm.collectionVariables.set('accessToken', jsonData.accessToken);",
-                  "    pm.collectionVariables.set('refreshToken', jsonData.refreshToken);",
-                  "}"
-                ],
-                "type": "text/javascript"
-              }
-            }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"email\": \"john.doe@example.com\",\n  \"password\": \"SecurePass123\",\n  \"firstName\": \"John\",\n  \"lastName\": \"Doe\"\n}"
-            },
-            "url": {
-              "raw": "{{baseUrl}}/api/auth/register",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "auth", "register"]
-            }
-          },
-          "response": []
-        },
-        {
-          "name": "Login",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "exec": [
-                  "if (pm.response.code === 200) {",
-                  "    var jsonData = pm.response.json();",
-                  "    pm.collectionVariables.set('accessToken', jsonData.accessToken);",
-                  "    pm.collectionVariables.set('refreshToken', jsonData.refreshToken);",
-                  "}"
-                ],
-                "type": "text/javascript"
-              }
-            }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"email\": \"john.doe@example.com\",\n  \"password\": \"SecurePass123\"\n}"
-            },
-            "url": {
-              "raw": "{{baseUrl}}/api/auth/login",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "auth", "login"]
-            }
-          },
-          "response": []
-        },
-        {
-          "name": "Validate Token",
-          "request": {
-            "method": "GET",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{accessToken}}"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/api/auth/validate",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "auth", "validate"]
-            }
-          },
-          "response": []
-        },
-        {
-          "name": "Refresh Token",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "exec": [
-                  "if (pm.response.code === 200) {",
-                  "    var jsonData = pm.response.json();",
-                  "    pm.collectionVariables.set('accessToken', jsonData.accessToken);",
-                  "    pm.collectionVariables.set('refreshToken', jsonData.refreshToken);",
-                  "}"
-                ],
-                "type": "text/javascript"
-              }
-            }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}"
-            },
-            "url": {
-              "raw": "{{baseUrl}}/api/auth/refresh",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "auth", "refresh"]
-            }
-          },
-          "response": []
-        },
-        {
-          "name": "Logout",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}"
-            },
-            "url": {
-              "raw": "{{baseUrl}}/api/auth/logout",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "auth", "logout"]
-            }
-          },
-          "response": []
-        }
-      ]
-    }
-  ]
-}

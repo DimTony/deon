@@ -1,248 +1,138 @@
 using AuthAPI.DTOs;
+using AuthAPI.Services;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
 
-namespace AuthAPI.Services;
+namespace AuthAPI.Controllers;
 
-public interface IAuthService
+[ApiController]
+[Route("api/[controller]")]
+public class AuthController : ControllerBase
 {
-    Task<AuthResponse> RegisterAsync(RegisterRequest request);
-    Task<AuthResponse> LoginAsync(LoginRequest request);
-    Task<AuthResponse> RefreshTokenAsync(string refreshToken);
-    Task<bool> RevokeTokenAsync(string refreshToken);
-}
+    private readonly IAuthService _authService;
 
-
-
-
-using AuthAPI.Data;
-using AuthAPI.DTOs;
-using AuthAPI.Models;
-using BCrypt.Net;
-using Microsoft.EntityFrameworkCore;
-
-namespace AuthAPI.Services;
-
-public class AuthService : IAuthService
-{
-    private readonly AuthDbContext _context;
-    private readonly ITokenService _tokenService;
-    private readonly IConfiguration _configuration;
-
-    public AuthService(AuthDbContext context, ITokenService tokenService, IConfiguration configuration)
+    public AuthController(IAuthService authService)
     {
-        _context = context;
-        _tokenService = tokenService;
-        _configuration = configuration;
+        _authService = authService;
     }
 
-    public async Task<AuthResponse> RegisterAsync(RegisterRequest request)
+    /// <summary>
+    /// Register a new user
+    /// </summary>
+    [HttpPost("register")]
+    [ProducesResponseType(typeof(AuthResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> Register([FromBody] RegisterRequest request)
     {
-        // Check if user already exists
-        if (await _context.Users.AnyAsync(u => u.Email == request.Email))
+        if (!ModelState.IsValid)
         {
-            return new AuthResponse
-            {
-                Success = false,
-                Message = "User with this email already exists"
-            };
+            return BadRequest(ModelState);
         }
 
-        // Hash password
-        var passwordHash = BCrypt.Net.BCrypt.HashPassword(request.Password);
+        var result = await _authService.RegisterAsync(request);
 
-        // Create user
-        var user = new User
+        if (!result.Success)
         {
-            Email = request.Email,
-            PasswordHash = passwordHash,
-            FirstName = request.FirstName,
-            LastName = request.LastName,
-            Role = "User",
-            IsActive = true,
-            CreatedAt = DateTime.UtcNow
-        };
+            return BadRequest(result);
+        }
 
-        _context.Users.Add(user);
-        await _context.SaveChangesAsync();
+        return Ok(result);
+    }
 
-        // Generate tokens
-        var accessToken = _tokenService.GenerateAccessToken(user);
-        var refreshToken = _tokenService.GenerateRefreshToken();
-
-        // Save refresh token
-        var refreshTokenEntity = new RefreshToken
+    /// <summary>
+    /// Login with email and password
+    /// </summary>
+    [HttpPost("login")]
+    [ProducesResponseType(typeof(AuthResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> Login([FromBody] LoginRequest request)
+    {
+        if (!ModelState.IsValid)
         {
-            Token = refreshToken,
-            UserId = user.Id,
-            ExpiresAt = DateTime.UtcNow.AddDays(int.Parse(_configuration["JwtSettings:RefreshTokenExpirationDays"] ?? "7")),
-            CreatedAt = DateTime.UtcNow
-        };
+            return BadRequest(ModelState);
+        }
 
-        _context.RefreshTokens.Add(refreshTokenEntity);
-        await _context.SaveChangesAsync();
+        var result = await _authService.LoginAsync(request);
 
-        return new AuthResponse
+        if (!result.Success)
         {
-            Success = true,
-            Message = "User registered successfully",
-            AccessToken = accessToken,
-            RefreshToken = refreshToken,
-            ExpiresAt = DateTime.UtcNow.AddMinutes(int.Parse(_configuration["JwtSettings:AccessTokenExpirationMinutes"] ?? "30")),
-            User = new UserDto
+            return Unauthorized(result);
+        }
+
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// Refresh access token using refresh token
+    /// </summary>
+    [HttpPost("refresh")]
+    [ProducesResponseType(typeof(AuthResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> RefreshToken([FromBody] RefreshTokenRequest request)
+    {
+        if (!ModelState.IsValid)
+        {
+            return BadRequest(ModelState);
+        }
+
+        var result = await _authService.RefreshTokenAsync(request.RefreshToken);
+
+        if (!result.Success)
+        {
+            return Unauthorized(result);
+        }
+
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// Revoke/logout using refresh token
+    /// </summary>
+    [HttpPost("logout")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> Logout([FromBody] RefreshTokenRequest request)
+    {
+        if (!ModelState.IsValid)
+        {
+            return BadRequest(ModelState);
+        }
+
+        var result = await _authService.RevokeTokenAsync(request.RefreshToken);
+
+        if (!result)
+        {
+            return BadRequest(new { success = false, message = "Invalid or already revoked token" });
+        }
+
+        return Ok(new { success = true, message = "Logged out successfully" });
+    }
+
+    /// <summary>
+    /// Validate access token and get user info (protected endpoint example)
+    /// </summary>
+    [HttpGet("validate")]
+    [Authorize]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public IActionResult ValidateToken()
+    {
+        var userId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        var email = User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value;
+        var role = User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value;
+
+        return Ok(new
+        {
+            success = true,
+            message = "Token is valid",
+            user = new
             {
-                Id = user.Id,
-                Email = user.Email,
-                FirstName = user.FirstName,
-                LastName = user.LastName,
-                Role = user.Role
+                id = userId,
+                email = email,
+                role = role
             }
-        };
-    }
-
-    public async Task<AuthResponse> LoginAsync(LoginRequest request)
-    {
-        // Find user
-        var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == request.Email);
-
-        if (user == null || !BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash))
-        {
-            return new AuthResponse
-            {
-                Success = false,
-                Message = "Invalid email or password"
-            };
-        }
-
-        if (!user.IsActive)
-        {
-            return new AuthResponse
-            {
-                Success = false,
-                Message = "Account is deactivated"
-            };
-        }
-
-        // Update last login
-        user.LastLoginAt = DateTime.UtcNow;
-
-        // Generate tokens
-        var accessToken = _tokenService.GenerateAccessToken(user);
-        var refreshToken = _tokenService.GenerateRefreshToken();
-
-        // Save refresh token
-        var refreshTokenEntity = new RefreshToken
-        {
-            Token = refreshToken,
-            UserId = user.Id,
-            ExpiresAt = DateTime.UtcNow.AddDays(int.Parse(_configuration["JwtSettings:RefreshTokenExpirationDays"] ?? "7")),
-            CreatedAt = DateTime.UtcNow
-        };
-
-        _context.RefreshTokens.Add(refreshTokenEntity);
-        await _context.SaveChangesAsync();
-
-        return new AuthResponse
-        {
-            Success = true,
-            Message = "Login successful",
-            AccessToken = accessToken,
-            RefreshToken = refreshToken,
-            ExpiresAt = DateTime.UtcNow.AddMinutes(int.Parse(_configuration["JwtSettings:AccessTokenExpirationMinutes"] ?? "30")),
-            User = new UserDto
-            {
-                Id = user.Id,
-                Email = user.Email,
-                FirstName = user.FirstName,
-                LastName = user.LastName,
-                Role = user.Role
-            }
-        };
-    }
-
-    public async Task<AuthResponse> RefreshTokenAsync(string refreshToken)
-    {
-        var storedToken = await _context.RefreshTokens
-            .Include(rt => rt.User)
-            .FirstOrDefaultAsync(rt => rt.Token == refreshToken);
-
-        if (storedToken == null)
-        {
-            return new AuthResponse
-            {
-                Success = false,
-                Message = "Invalid refresh token"
-            };
-        }
-
-        if (storedToken.IsRevoked)
-        {
-            return new AuthResponse
-            {
-                Success = false,
-                Message = "Refresh token has been revoked"
-            };
-        }
-
-        if (storedToken.ExpiresAt < DateTime.UtcNow)
-        {
-            return new AuthResponse
-            {
-                Success = false,
-                Message = "Refresh token has expired"
-            };
-        }
-
-        // Generate new tokens
-        var accessToken = _tokenService.GenerateAccessToken(storedToken.User);
-        var newRefreshToken = _tokenService.GenerateRefreshToken();
-
-        // Revoke old refresh token
-        storedToken.IsRevoked = true;
-        storedToken.RevokedReason = "Replaced with new token";
-
-        // Save new refresh token
-        var newRefreshTokenEntity = new RefreshToken
-        {
-            Token = newRefreshToken,
-            UserId = storedToken.UserId,
-            ExpiresAt = DateTime.UtcNow.AddDays(int.Parse(_configuration["JwtSettings:RefreshTokenExpirationDays"] ?? "7")),
-            CreatedAt = DateTime.UtcNow
-        };
-
-        _context.RefreshTokens.Add(newRefreshTokenEntity);
-        await _context.SaveChangesAsync();
-
-        return new AuthResponse
-        {
-            Success = true,
-            Message = "Token refreshed successfully",
-            AccessToken = accessToken,
-            RefreshToken = newRefreshToken,
-            ExpiresAt = DateTime.UtcNow.AddMinutes(int.Parse(_configuration["JwtSettings:AccessTokenExpirationMinutes"] ?? "30")),
-            User = new UserDto
-            {
-                Id = storedToken.User.Id,
-                Email = storedToken.User.Email,
-                FirstName = storedToken.User.FirstName,
-                LastName = storedToken.User.LastName,
-                Role = storedToken.User.Role
-            }
-        };
-    }
-
-    public async Task<bool> RevokeTokenAsync(string refreshToken)
-    {
-        var storedToken = await _context.RefreshTokens
-            .FirstOrDefaultAsync(rt => rt.Token == refreshToken);
-
-        if (storedToken == null || storedToken.IsRevoked)
-        {
-            return false;
-        }
-
-        storedToken.IsRevoked = true;
-        storedToken.RevokedReason = "Revoked by user";
-        await _context.SaveChangesAsync();
-
-        return true;
+        });
     }
 }

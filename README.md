@@ -1,315 +1,152 @@
+using Microsoft.EntityFrameworkCore;
+using HotelManagement.Data;
 using HotelManagement.DTOs;
 using HotelManagement.Interfaces;
 using HotelManagement.Models;
-using Microsoft.EntityFrameworkCore.Storage;
-using System.ComponentModel.DataAnnotations;
 
-namespace HotelManagement.Services
+namespace HotelManagement.Repositories
 {
-    public class RoomService : IRoomService
+    public class RoomRepository : IRoomRepository
     {
-        private readonly IRoomRepository _roomRepository;
-        private readonly IUnitOfWork _unitOfWork;
-        private readonly ILogger<RoomService> _logger;
+        private readonly ApplicationDbContext _context;
 
-        public RoomService(
-            IRoomRepository roomRepository, 
-            IUnitOfWork unitOfWork,
-            ILogger<RoomService> logger)
+        public RoomRepository(ApplicationDbContext context)
         {
-            _roomRepository = roomRepository;
-            _unitOfWork = unitOfWork;
-            _logger = logger;
+            _context = context;
         }
 
-        public async Task<PaginatedResponseDTO<RoomDTO>> GetFilteredRoomsAsync(RoomFilterDTO filter)
+        public async Task<IEnumerable<Room>> GetAllRoomsAsync()
         {
-            try
-            {
-                var pagedRooms = await _roomRepository.GetFilteredRoomsAsync(filter);
-                var roomDtos = pagedRooms.Data.Select(r => MapToDTO(r)).ToList();
+            return await _context.Rooms
+                .AsNoTracking()
+                .ToListAsync();
+        }
 
-                return PaginatedResponseDTO<RoomDTO>.SuccessResult(
-                    roomDtos,
-                    pagedRooms.PageNumber,
-                    pagedRooms.PageSize,
-                    pagedRooms.TotalCount
+        public async Task<PagedList<Room>> GetFilteredRoomsAsync(RoomFilterDTO filter)
+        {
+            var query = _context.Rooms.AsNoTracking().AsQueryable();
+
+            query = ApplyFilters(query, filter);
+            query = ApplySorting(query, filter.SortBy, filter.SortOrder);
+
+            return await PagedList<Room>.CreateAsync(query, filter.PageNumber, filter.PageSize);
+        }
+
+        public async Task<Room?> GetRoomByIdAsync(int id)
+        {
+            return await _context.Rooms.FindAsync(id);
+        }
+
+        public async Task<Room?> GetRoomByRoomNumberAsync(string roomNumber)
+        {
+            return await _context.Rooms
+                .AsNoTracking()
+                .FirstOrDefaultAsync(r => r.RoomNumber == roomNumber);
+        }
+
+        public async Task<Room> CreateRoomAsync(Room room)
+        {
+            await _context.Rooms.AddAsync(room);
+            // Note: SaveChanges is called in the service layer via UnitOfWork
+            return room;
+        }
+
+        public async Task<Room> UpdateRoomAsync(Room room)
+        {
+            _context.Entry(room).State = EntityState.Modified;
+            // Note: SaveChanges is called in the service layer via UnitOfWork
+            return room;
+        }
+
+        public async Task<Room> DeleteRoomAsync(Room room)
+        {
+            _context.Rooms.Remove(room);
+            // Note: SaveChanges is called in the service layer via UnitOfWork
+            return room;
+        }
+
+        public async Task<IEnumerable<Room>> GetAvailableRoomsAsync(DateTime checkIn, DateTime checkOut)
+        {
+            var bookedRoomIds = await _context.Bookings
+                .AsNoTracking()
+                .Where(b => b.CheckInDate < checkOut && b.CheckOutDate > checkIn)
+                .Select(b => b.RoomId)
+                .ToListAsync();
+
+            return await _context.Rooms
+                .AsNoTracking()
+                .Where(r => !bookedRoomIds.Contains(r.Id) && r.IsAvailable)
+                .ToListAsync();
+        }
+
+        public async Task<bool> HasActiveBookingsAsync(int roomId)
+        {
+            var today = DateTime.Today;
+            return await _context.Bookings
+                .AsNoTracking()
+                .AnyAsync(b => b.RoomId == roomId && b.CheckOutDate >= today);
+        }
+
+        private IQueryable<Room> ApplyFilters(IQueryable<Room> query, RoomFilterDTO filter)
+        {
+            if (!string.IsNullOrWhiteSpace(filter.SearchTerm))
+            {
+                var searchTerm = filter.SearchTerm.ToLower();
+                query = query.Where(r => 
+                    r.RoomNumber.ToLower().Contains(searchTerm) ||
+                    r.RoomType.ToString().ToLower().Contains(searchTerm) ||
+                    (r.Description != null && r.Description.ToLower().Contains(searchTerm))
                 );
             }
-            catch (Exception ex)
+
+            if (!string.IsNullOrWhiteSpace(filter.RoomType) &&
+                Enum.TryParse<RoomType>(filter.RoomType, true, out var parsedType))
             {
-                _logger.LogError(ex, "Error retrieving filtered rooms");
-                throw;
+                query = query.Where(r => r.RoomType == parsedType);
             }
+
+            if (filter.MinPrice.HasValue)
+            {
+                query = query.Where(r => r.PricePerNight >= filter.MinPrice.Value);
+            }
+
+            if (filter.MaxPrice.HasValue)
+            {
+                query = query.Where(r => r.PricePerNight <= filter.MaxPrice.Value);
+            }
+
+            if (filter.IsAvailable.HasValue)
+            {
+                query = query.Where(r => r.IsAvailable == filter.IsAvailable.Value);
+            }
+
+            return query;
         }
 
-        public async Task<NonPaginatedResponseDTO<RoomDTO>> GetRoomByIdAsync(int id)
+        private IQueryable<Room> ApplySorting(IQueryable<Room> query, string? sortBy, string? sortOrder)
         {
-            try
+            if (string.IsNullOrWhiteSpace(sortBy))
             {
-                var room = await _roomRepository.GetRoomByIdAsync(id);
-
-                return room == null
-                    ? NonPaginatedResponseDTO<RoomDTO>.FailureResult(
-                        "Room not found",
-                        new List<string> { $"Room with ID {id} does not exist" }
-                    )
-                    : NonPaginatedResponseDTO<RoomDTO>.SuccessResult(
-                        MapToDTO(room),
-                        "Room retrieved successfully"
-                    );
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error retrieving room {RoomId}", id);
-                throw;
-            }
-        }
-
-        public async Task<NonPaginatedResponseDTO<RoomDTO>> CreateRoomAsync(CreateRoomDTO createRoomDTO)
-        {
-            await using var transaction = await _unitOfWork.BeginTransactionAsync();
-            
-            try
-            {
-                // Validate DTO
-                var validationErrors = ValidateCreateRoomDTO(createRoomDTO);
-                if (validationErrors.Any())
-                {
-                    return NonPaginatedResponseDTO<RoomDTO>.FailureResult(
-                        "Validation failed",
-                        validationErrors
-                    );
-                }
-
-                // Check if room number already exists
-                var existingRoom = await _roomRepository.GetRoomByRoomNumberAsync(createRoomDTO.RoomNumber);
-                if (existingRoom != null)
-                {
-                    return NonPaginatedResponseDTO<RoomDTO>.FailureResult(
-                        "Room creation failed",
-                        new List<string> { $"Room number '{createRoomDTO.RoomNumber}' already exists" }
-                    );
-                }
-
-                // Create room entity
-                var room = new Room
-                {
-                    RoomNumber = createRoomDTO.RoomNumber,
-                    RoomType = Enum.Parse<RoomType>(createRoomDTO.RoomType),
-                    PricePerNight = createRoomDTO.PricePerNight,
-                    Capacity = createRoomDTO.Capacity,
-                    IsAvailable = createRoomDTO.IsAvailable,
-                    Description = createRoomDTO.Description
-                };
-
-                var createdRoom = await _roomRepository.CreateRoomAsync(room);
-                await _unitOfWork.SaveChangesAsync();
-                await transaction.CommitAsync();
-
-                _logger.LogInformation("Room created successfully: {RoomId}", createdRoom.Id);
-
-                return NonPaginatedResponseDTO<RoomDTO>.SuccessResult(
-                    MapToDTO(createdRoom), 
-                    "Room created successfully"
-                );
-            }
-            catch (Exception ex)
-            {
-                await transaction.RollbackAsync();
-                _logger.LogError(ex, "Error creating room");
-                throw;
-            }
-        }
-
-        public async Task<NonPaginatedResponseDTO<RoomDTO>> UpdateRoomAsync(int id, CreateRoomDTO updateRoomDTO)
-        {
-            await using var transaction = await _unitOfWork.BeginTransactionAsync();
-            
-            try
-            {
-                // Validate DTO
-                var validationErrors = ValidateCreateRoomDTO(updateRoomDTO);
-                if (validationErrors.Any())
-                {
-                    return NonPaginatedResponseDTO<RoomDTO>.FailureResult(
-                        "Validation failed",
-                        validationErrors
-                    );
-                }
-
-                // Get existing room
-                var room = await _roomRepository.GetRoomByIdAsync(id);
-                if (room == null)
-                {
-                    return NonPaginatedResponseDTO<RoomDTO>.FailureResult(
-                        "Room not found",
-                        new List<string> { $"Room with ID {id} does not exist" }
-                    );
-                }
-
-                // Check if room number is being changed to an existing one
-                if (room.RoomNumber != updateRoomDTO.RoomNumber)
-                {
-                    var existingRoom = await _roomRepository.GetRoomByRoomNumberAsync(updateRoomDTO.RoomNumber);
-                    if (existingRoom != null && existingRoom.Id != id)
-                    {
-                        return NonPaginatedResponseDTO<RoomDTO>.FailureResult(
-                            "Room update failed",
-                            new List<string> { $"Room number '{updateRoomDTO.RoomNumber}' already exists" }
-                        );
-                    }
-                }
-
-                // Update room properties
-                room.RoomNumber = updateRoomDTO.RoomNumber;
-                room.RoomType = Enum.Parse<RoomType>(updateRoomDTO.RoomType);
-                room.PricePerNight = updateRoomDTO.PricePerNight;
-                room.Capacity = updateRoomDTO.Capacity;
-                room.IsAvailable = updateRoomDTO.IsAvailable;
-                room.Description = updateRoomDTO.Description;
-
-                var updatedRoom = await _roomRepository.UpdateRoomAsync(room);
-                await _unitOfWork.SaveChangesAsync();
-                await transaction.CommitAsync();
-
-                _logger.LogInformation("Room updated successfully: {RoomId}", updatedRoom.Id);
-
-                return NonPaginatedResponseDTO<RoomDTO>.SuccessResult(
-                    MapToDTO(updatedRoom),
-                    "Room updated successfully"
-                );
-            }
-            catch (Exception ex)
-            {
-                await transaction.RollbackAsync();
-                _logger.LogError(ex, "Error updating room {RoomId}", id);
-                throw;
-            }
-        }
-
-        public async Task<NonPaginatedResponseDTO<RoomDTO>> DeleteRoomAsync(int id)
-        {
-            await using var transaction = await _unitOfWork.BeginTransactionAsync();
-            
-            try
-            {
-                var room = await _roomRepository.GetRoomByIdAsync(id);
-                if (room == null)
-                {
-                    return NonPaginatedResponseDTO<RoomDTO>.FailureResult(
-                        "Room not found",
-                        new List<string> { $"Room with ID {id} does not exist" }
-                    );
-                }
-
-                // Check if room has active bookings
-                var hasActiveBookings = await _roomRepository.HasActiveBookingsAsync(id);
-                if (hasActiveBookings)
-                {
-                    return NonPaginatedResponseDTO<RoomDTO>.FailureResult(
-                        "Room deletion failed",
-                        new List<string> { "Cannot delete room with active bookings" }
-                    );
-                }
-
-                var deletedRoom = await _roomRepository.DeleteRoomAsync(room);
-                await _unitOfWork.SaveChangesAsync();
-                await transaction.CommitAsync();
-
-                _logger.LogInformation("Room deleted successfully: {RoomId}", id);
-
-                return NonPaginatedResponseDTO<RoomDTO>.SuccessResult(
-                    MapToDTO(deletedRoom),
-                    "Room deleted successfully"
-                );
-            }
-            catch (Exception ex)
-            {
-                await transaction.RollbackAsync();
-                _logger.LogError(ex, "Error deleting room {RoomId}", id);
-                throw;
-            }
-        }
-
-        public async Task<NonPaginatedResponseDTO<IEnumerable<RoomDTO>>> GetAvailableRoomsAsync(DateTime checkIn, DateTime checkOut)
-        {
-            try
-            {
-                // Validate dates
-                if (checkIn >= checkOut)
-                {
-                    return NonPaginatedResponseDTO<IEnumerable<RoomDTO>>.FailureResult(
-                        "Invalid date range",
-                        new List<string> { "Check-in date must be before check-out date" }
-                    );
-                }
-
-                if (checkIn < DateTime.Today)
-                {
-                    return NonPaginatedResponseDTO<IEnumerable<RoomDTO>>.FailureResult(
-                        "Invalid date range",
-                        new List<string> { "Check-in date cannot be in the past" }
-                    );
-                }
-
-                var rooms = await _roomRepository.GetAvailableRoomsAsync(checkIn, checkOut);
-                var roomDtos = rooms.Select(r => MapToDTO(r)).ToList();
-
-                return NonPaginatedResponseDTO<IEnumerable<RoomDTO>>.SuccessResult(
-                    roomDtos,
-                    $"Found {roomDtos.Count} available rooms"
-                );
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error retrieving available rooms");
-                throw;
-            }
-        }
-
-        private List<string> ValidateCreateRoomDTO(CreateRoomDTO dto)
-        {
-            var errors = new List<string>();
-
-            if (string.IsNullOrWhiteSpace(dto.RoomNumber))
-            {
-                errors.Add("Room number is required");
+                return query.OrderBy(r => r.RoomNumber);
             }
 
-            if (string.IsNullOrWhiteSpace(dto.RoomType))
-            {
-                errors.Add("Room type is required");
-            }
-            else if (!Enum.TryParse<RoomType>(dto.RoomType, true, out _))
-            {
-                errors.Add($"Invalid room type: {dto.RoomType}");
-            }
+            var isDescending = sortOrder?.ToLower() == "desc";
 
-            if (dto.PricePerNight <= 0)
+            return sortBy.ToLower() switch
             {
-                errors.Add("Price per night must be greater than zero");
-            }
-
-            if (dto.Capacity <= 0)
-            {
-                errors.Add("Capacity must be greater than zero");
-            }
-
-            return errors;
-        }
-
-        private RoomDTO MapToDTO(Room room)
-        {
-            return new RoomDTO
-            {
-                Id = room.Id,
-                RoomNumber = room.RoomNumber,
-                RoomType = room.RoomType.ToString(),
-                PricePerNight = room.PricePerNight,
-                Capacity = room.Capacity,
-                IsAvailable = room.IsAvailable,
-                Description = room.Description
+                "price" => isDescending
+                    ? query.OrderByDescending(r => r.PricePerNight)
+                    : query.OrderBy(r => r.PricePerNight),
+                "roomnumber" => isDescending
+                    ? query.OrderByDescending(r => r.RoomNumber)
+                    : query.OrderBy(r => r.RoomNumber),
+                "capacity" => isDescending
+                    ? query.OrderByDescending(r => r.Capacity)
+                    : query.OrderBy(r => r.Capacity),
+                "roomtype" => isDescending
+                    ? query.OrderByDescending(r => r.RoomType)
+                    : query.OrderBy(r => r.RoomType),
+                _ => query.OrderBy(r => r.RoomNumber)
             };
         }
     }

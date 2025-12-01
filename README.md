@@ -37,9 +37,9 @@ export interface UsePaginatedDataOptions<T, F = any> {
 
 /**
  * Reusable Hook for Paginated Data
- * 
+ *
  * This hook handles all the common state and logic for paginated API calls.
- * 
+ *
  * @example
  * ```tsx
  * const {
@@ -58,15 +58,17 @@ export interface UsePaginatedDataOptions<T, F = any> {
  *   pageSize: 10,
  *   initialFilters: { status: "active" }
  * });
- * 
+ *
  * // In useEffect
  * useEffect(() => {
  *   fetchData();
  * }, [currentPage]);
  * ```
  */
-export function usePaginatedData<T, F = any>(
-  fetchFn: (payload: PaginatedRequestPayload) => Promise<PaginatedApiResponse<T>>,
+export function useTableData<T, F = any>(
+  fetchFn: (
+    payload: PaginatedRequestPayload
+  ) => Promise<PaginatedApiResponse<T>>,
   options: UsePaginatedDataOptions<T, F> = {}
 ) {
   const {
@@ -90,7 +92,8 @@ export function usePaginatedData<T, F = any>(
     async (customFilters?: F, customPage?: number) => {
       setLoading(true);
       try {
-        const filtersToUse = customFilters !== undefined ? customFilters : filters;
+        const filtersToUse =
+          customFilters !== undefined ? customFilters : filters;
         const pageToUse = customPage !== undefined ? customPage : currentPage;
 
         const payload: PaginatedRequestPayload = {
@@ -108,11 +111,11 @@ export function usePaginatedData<T, F = any>(
         onSuccess?.(response);
       } catch (error) {
         console.error("Failed to fetch paginated data:", error);
-        
+
         setData([]);
         setTotalCount(0);
         setTotalPages(0);
-        
+
         onError?.(error);
       } finally {
         setLoading(false);
@@ -124,15 +127,17 @@ export function usePaginatedData<T, F = any>(
   /**
    * Update filters and reset to page 1
    */
-  const updateFilters = useCallback((newFilters: F | ((prev: F) => F)) => {
-    const updatedFilters = typeof newFilters === 'function' 
-      ? newFilters(filters) 
-      : newFilters;
-    
-    setFilters(updatedFilters);
-    setCurrentPage(1);
-    fetchData(updatedFilters, 1);
-  }, [filters, fetchData]);
+  const updateFilters = useCallback(
+    (newFilters: F | ((prev: F) => F)) => {
+      const updatedFilters =
+        typeof newFilters === "function" ? newFilters(filters) : newFilters;
+
+      setFilters(updatedFilters);
+      setCurrentPage(1);
+      fetchData(updatedFilters, 1);
+    },
+    [filters, fetchData]
+  );
 
   /**
    * Refetch current page with current filters
@@ -144,11 +149,14 @@ export function usePaginatedData<T, F = any>(
   /**
    * Go to specific page
    */
-  const goToPage = useCallback((page: number) => {
-    if (page >= 1 && page <= totalPages) {
-      setCurrentPage(page);
-    }
-  }, [totalPages]);
+  const goToPage = useCallback(
+    (page: number) => {
+      if (page >= 1 && page <= totalPages) {
+        setCurrentPage(page);
+      }
+    },
+    [totalPages]
+  );
 
   /**
    * Reset to initial state
@@ -182,6 +190,13 @@ export function usePaginatedData<T, F = any>(
   };
 }
 
+
+
+
+This expression is not callable.
+  Not all constituents of type '((prev: F) => F) | (F & Function)' are callable.
+    Type 'F & Function' has no call signatures.ts(2349)
+(parameter) newFilters: ((prev: F) => F) | (F & Function) 
 
 
 

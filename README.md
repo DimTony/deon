@@ -1,7 +1,7 @@
 "use client";
 
 import { useUserService } from "@/hooks/useUserService";
-import { Eye, Plus, Search, SquarePen, Trash2, View } from "lucide-react";
+import { Eye, Plus, Search, SquarePen, Trash2 } from "lucide-react";
 import React, { useEffect, useState } from "react";
 
 interface Filters {
@@ -46,8 +46,6 @@ const UserManagement = () => {
         pageSize: pageSize,
         filter: {
           date: "",
-          // startDate: formatDateForAPI(filtersToUse.startDate),
-          // endDate: formatDateForAPI(filtersToUse.endDate),
           startDate: "",
           endDate: "",
           globalSearch: filtersToUse.globalSearch,
@@ -57,8 +55,6 @@ const UserManagement = () => {
       };
 
       const data = await fetchAllUsers(payload);
-
-      // console.log("FETCHED DATAAA:", data);
 
       setTableData(data.data || []);
       setTotalCount(data.totalCount);
@@ -72,6 +68,13 @@ const UserManagement = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleSearch = (searchValue: string) => {
+    const newFilters = { ...filters, globalSearch: searchValue };
+    setFilters(newFilters);
+    setCurrentPage(1); // Reset to first page on search
+    fetchTableData(newFilters, 1);
   };
 
   return (
@@ -93,7 +96,9 @@ const UserManagement = () => {
                 <input
                   type="text"
                   placeholder="Search users..."
-                  className="w-40 pl-7 pr-2 py-1 border border-gray-300 rounded-md text-sm 
+                  value={filters.globalSearch}
+                  onChange={(e) => handleSearch(e.target.value)}
+                  className="w-40 pl-7 pr-2 py-1 border border-gray-300 rounded-md text-sm text-black
                  focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 />
               </div>
@@ -119,56 +124,130 @@ const UserManagement = () => {
               </thead>
 
               <tbody>
-                <tr className="border-b border-white/10 hover:bg-white/5 transition">
-                  {/* <td className="py-2 px-2">John Doe</td> */}
-                  <td className="py-2 px-2">
-                    <div className="flex items-center gap-1">
-                      <div className="w-8 h-8 rounded-full bg-red-200" />
-                      <div className="flex flex-col">
-                        <span>John Doe</span>
-                        {/* <span className="text-[9px]">Jjohn@example.com</span> */}
+                {loading ? (
+                  <tr>
+                    <td colSpan={5} className="py-8 text-center text-gray-400">
+                      <div className="flex items-center justify-center gap-2">
+                        <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                        Loading users...
                       </div>
-                    </div>
-                  </td>
-                  <td className="py-2 px-2">john@example.com</td>
-                  <td className="py-2 px-2">Admin</td>
-                  <td className="py-2 px-2">
-                    <span className="px-2 py-1 text-xs bg-green-600/40 rounded-full">
-                      Active
-                    </span>
-                  </td>
-                  <td className="text-right px-2">
-                    <div className="flex items-center justify-end gap-2">
-                      <button className="flex items-center justify-center backdrop-blur-xl bg-white/10 hover:bg-white/65 rounded-full p-1.5 cursor-pointer  text-blue-300 hover:text-blue-400 text-xs">
-                        <Eye size={12} />
-                      </button>
-                      <button className="flex items-center justify-center backdrop-blur-xl bg-white/10 hover:bg-white/65 rounded-full p-1.5 cursor-pointer  text-blue-300 hover:text-blue-400 text-xs">
-                        <SquarePen size={12} />
-                      </button>
-                      <button className="flex items-center justify-center backdrop-blur-xl bg-white/10 hover:bg-white/65 rounded-full p-1.5 cursor-pointer  text-blue-300 hover:text-blue-400 text-xs">
-                        <Trash2 size={12} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-
-                <tr className="border-b border-white/10 hover:bg-white/5 transition">
-                  <td className="py-2 px-2">Jane Smith</td>
-                  <td className="py-2 px-2">jane@example.com</td>
-                  <td className="py-2 px-2">User</td>
-                  <td className="py-2 px-2">
-                    <span className="px-2 py-1 text-xs bg-red-600/40 rounded-full">
-                      Inactive
-                    </span>
-                  </td>
-                  <td className="py-2 px-2 text-right">
-                    <button className="text-blue-300 hover:text-blue-400 text-xs">
-                      Edit
-                    </button>
-                  </td>
-                </tr>
+                    </td>
+                  </tr>
+                ) : tableData.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="py-8 text-center text-gray-400">
+                      No users found
+                    </td>
+                  </tr>
+                ) : (
+                  tableData.map((user, index) => (
+                    <tr
+                      key={user.id || index}
+                      className="border-b border-white/10 hover:bg-white/5 transition"
+                    >
+                      <td className="py-2 px-2">
+                        <div className="flex items-center gap-2">
+                          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-400 to-purple-500 flex items-center justify-center text-white font-semibold text-xs">
+                            {user.firstName?.[0]}{user.lastName?.[0]}
+                          </div>
+                          <div className="flex flex-col">
+                            <span>{user.firstName} {user.lastName}</span>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="py-2 px-2">{user.email}</td>
+                      <td className="py-2 px-2">{user.role}</td>
+                      <td className="py-2 px-2">
+                        <span
+                          className={`px-2 py-1 text-xs rounded-full ${
+                            user.status?.toLowerCase() === "active" ||
+                            user.isActive
+                              ? "bg-green-600/40"
+                              : "bg-red-600/40"
+                          }`}
+                        >
+                          {user.status || (user.isActive ? "Active" : "Inactive")}
+                        </span>
+                      </td>
+                      <td className="text-right px-2">
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            className="flex items-center justify-center backdrop-blur-xl bg-white/10 hover:bg-white/65 rounded-full p-1.5 cursor-pointer text-blue-300 hover:text-blue-400 text-xs transition-all duration-300"
+                            title="View"
+                            onClick={() => console.log("View user:", user.id)}
+                          >
+                            <Eye size={12} />
+                          </button>
+                          <button
+                            className="flex items-center justify-center backdrop-blur-xl bg-white/10 hover:bg-white/65 rounded-full p-1.5 cursor-pointer text-blue-300 hover:text-blue-400 text-xs transition-all duration-300"
+                            title="Edit"
+                            onClick={() => console.log("Edit user:", user.id)}
+                          >
+                            <SquarePen size={12} />
+                          </button>
+                          <button
+                            className="flex items-center justify-center backdrop-blur-xl bg-white/10 hover:bg-white/65 rounded-full p-1.5 cursor-pointer text-red-300 hover:text-red-400 text-xs transition-all duration-300"
+                            title="Delete"
+                            onClick={() => console.log("Delete user:", user.id)}
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
+
+            {/* Pagination Controls */}
+            {!loading && tableData.length > 0 && (
+              <div className="mt-4 flex items-center justify-between text-sm">
+                <div className="text-gray-300">
+                  Showing {((currentPage - 1) * pageSize) + 1} to{" "}
+                  {Math.min(currentPage * pageSize, totalCount)} of {totalCount}{" "}
+                  users
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+                    disabled={currentPage === 1}
+                    className="px-3 py-1 backdrop-blur-xl bg-white/10 text-white rounded-md text-xs hover:bg-white/65 hover:text-black cursor-pointer transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-white/10 disabled:hover:text-white"
+                  >
+                    Previous
+                  </button>
+
+                  <div className="flex items-center gap-1">
+                    {Array.from({ length: totalPages }, (_, i) => i + 1).map(
+                      (page) => (
+                        <button
+                          key={page}
+                          onClick={() => setCurrentPage(page)}
+                          className={`px-2 py-1 rounded-md text-xs transition-all duration-300 ${
+                            currentPage === page
+                              ? "bg-white text-black"
+                              : "backdrop-blur-xl bg-white/10 text-white hover:bg-white/65 hover:text-black"
+                          }`}
+                        >
+                          {page}
+                        </button>
+                      )
+                    )}
+                  </div>
+
+                  <button
+                    onClick={() =>
+                      setCurrentPage((prev) => Math.min(totalPages, prev + 1))
+                    }
+                    disabled={currentPage === totalPages}
+                    className="px-3 py-1 backdrop-blur-xl bg-white/10 text-white rounded-md text-xs hover:bg-white/65 hover:text-black cursor-pointer transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-white/10 disabled:hover:text-white"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </section>
       </div>
@@ -177,48 +256,3 @@ const UserManagement = () => {
 };
 
 export default UserManagement;
-
-data
-: 
-Array(2)
-0
-: 
-{id: 1003, email: 'allenbrownkane@gmail.com', firstName: 'Allen', lastName: 'Kane', role: 'Manager', …}
-1
-: 
-{id: 3, email: 'tonystoryemail@gmail.com', firstName: 'Tony', lastName: 'Story', role: 'Admin', …}
-length
-: 
-2
-[[Prototype]]
-: 
-Array(0)
-errors
-: 
-null
-hasNext
-: 
-false
-hasPrevious
-: 
-false
-message
-: 
-"Retrieved 2 of 2 users"
-pageNumber
-: 
-1
-pageSize
-: 
-10
-success
-: 
-true
-totalCount
-: 
-2
-totalPages
-: 
-1
-
-

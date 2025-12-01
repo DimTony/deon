@@ -1,169 +1,224 @@
-using HotelManagement.Auth.Data;
-using HotelManagement.Auth.Interfaces;
-using HotelManagement.Auth.Services;
-using Microsoft.AspNetCore.Authentication.JwtBearer;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.IdentityModel.Tokens;
-using Microsoft.OpenApi.Models;
-using System.Text;
+"use client";
 
-var builder = WebApplication.CreateBuilder(args);
+import { useUserService } from "@/hooks/useUserService";
+import { Eye, Plus, Search, SquarePen, Trash2, View } from "lucide-react";
+import React, { useEffect, useState } from "react";
 
-// Add services to the container
-builder.Services.AddControllers();
-builder.Services.AddEndpointsApiExplorer();
-
-// ==========================================
-// JWT AUTHENTICATION CONFIGURATION
-// ==========================================
-
-var jwtSettings = builder.Configuration.GetSection("JwtSettings");
-var secretKey = jwtSettings["SecretKey"];
-
-builder.Services.AddAuthentication(options =>
-{
-    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
-    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
-})
-.AddJwtBearer(options =>
-{
-    options.TokenValidationParameters = new TokenValidationParameters
-    {
-        ValidateIssuer = true,
-        ValidateAudience = true,
-        ValidateLifetime = true,
-        ValidateIssuerSigningKey = true,
-        ValidIssuer = jwtSettings["Issuer"],
-        ValidAudience = jwtSettings["Audience"],
-        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secretKey!)),
-        ClockSkew = TimeSpan.Zero // Remove default 5 minute clock skew
-    };
-
-    // Optional: Add event handlers for debugging
-    options.Events = new JwtBearerEvents
-    {
-        OnAuthenticationFailed = context =>
-        {
-            Console.WriteLine($"Authentication failed: {context.Exception.Message}");
-            return Task.CompletedTask;
-        },
-        OnTokenValidated = context =>
-        {
-            Console.WriteLine($"Token validated for: {context.Principal?.Identity?.Name}");
-            return Task.CompletedTask;
-        },
-        OnChallenge = context =>
-        {
-            Console.WriteLine($"OnChallenge error: {context.Error}, {context.ErrorDescription}");
-            return Task.CompletedTask;
-        }
-    };
-});
-
-// ==========================================
-// AUTHORIZATION
-// ==========================================
-
-builder.Services.AddAuthorization();
-
-// ==========================================
-// SWAGGER CONFIGURATION WITH JWT
-// ==========================================
-
-builder.Services.AddSwaggerGen(c =>
-{
-    c.SwaggerDoc("v1", new OpenApiInfo
-    {
-        Title = "Hotel Management Auth API",
-        Version = "v1",
-        Description = "Authentication and Authorization API for Hotel Management System"
-    });
-
-    // Add JWT Authentication to Swagger
-    c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
-    {
-        Description = "JWT Authorization header using the Bearer scheme. Enter 'Bearer' [space] and then your token in the text input below.\n\nExample: \"Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...\"",
-        Name = "Authorization",
-        In = ParameterLocation.Header,
-        Type = SecuritySchemeType.ApiKey,
-        Scheme = "Bearer",
-        BearerFormat = "JWT"
-    });
-
-    c.AddSecurityRequirement(new OpenApiSecurityRequirement
-    {
-        {
-            new OpenApiSecurityScheme
-            {
-                Reference = new OpenApiReference
-                {
-                    Type = ReferenceType.SecurityScheme,
-                    Id = "Bearer"
-                }
-            },
-            Array.Empty<string>()
-        }
-    });
-});
-
-// ==========================================
-// DATABASE CONTEXT
-// ==========================================
-
-builder.Services.AddDbContext<ApplicationDbContext>(options =>
-    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
-
-// ==========================================
-// DEPENDENCY INJECTION
-// ==========================================
-
-builder.Services.AddScoped<IAuthService, AuthService>();
-builder.Services.AddScoped<ITokenService, TokenService>();
-
-// ==========================================
-// CORS CONFIGURATION
-// ==========================================
-
-builder.Services.AddCors(options =>
-{
-    options.AddPolicy("AllowAll", policy =>
-    {
-        policy.AllowAnyOrigin()
-              .AllowAnyMethod()
-              .AllowAnyHeader();
-    });
-});
-
-var app = builder.Build();
-
-// ==========================================
-// MIDDLEWARE PIPELINE
-// CRITICAL: ORDER MATTERS!
-// ==========================================
-
-// 1. Swagger (Development only)
-if (app.Environment.IsDevelopment())
-{
-    app.UseSwagger();
-    app.UseSwaggerUI(c =>
-    {
-        c.SwaggerEndpoint("/swagger/v1/swagger.json", "Hotel Management Auth API v1");
-    });
+interface Filters {
+  status: string;
+  startDate: string;
+  endDate: string;
+  tab: "Pending" | "Claimed";
+  globalSearch: string;
 }
 
-// 2. HTTPS Redirection
-app.UseHttpsRedirection();
+const UserManagement = () => {
+  const { fetchAllUsers } = useUserService();
+  const pageSize = 10;
+  const [tableData, setTableData] = useState<any[]>([]);
+  const [totalCount, setTotalCount] = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [loading, setLoading] = useState(false);
+  const [filters, setFilters] = useState<Filters>({
+    status: "",
+    startDate: "",
+    endDate: "",
+    tab: "Pending",
+    globalSearch: "",
+  });
 
-// 3. CORS (must be before authentication/authorization)
-app.UseCors("AllowAll");
+  useEffect(() => {
+    fetchTableData();
+  }, [currentPage]);
 
-// 4. Authentication (MUST come before Authorization)
-app.UseAuthentication();
+  const fetchTableData = async (
+    customFilters?: Filters,
+    customPage?: number
+  ) => {
+    setLoading(true);
+    try {
+      const filtersToUse = customFilters || filters;
+      const pageToUse = customPage || currentPage;
 
-// 5. Authorization (MUST come after Authentication)
-app.UseAuthorization();
+      const payload = {
+        pageNumber: pageToUse,
+        pageSize: pageSize,
+        filter: {
+          date: "",
+          // startDate: formatDateForAPI(filtersToUse.startDate),
+          // endDate: formatDateForAPI(filtersToUse.endDate),
+          startDate: "",
+          endDate: "",
+          globalSearch: filtersToUse.globalSearch,
+          status: filtersToUse.status,
+          tab: filtersToUse.tab,
+        },
+      };
 
-// 6. Map Controllers
-app.MapControllers();
+      const data = await fetchAllUsers(payload);
 
-app.Run();
+      // console.log("FETCHED DATAAA:", data);
+
+      setTableData(data.data || []);
+      setTotalCount(data.totalCount);
+      setTotalPages(data.totalPages);
+    } catch (error) {
+      console.error("Failed to fetch table data:", error);
+
+      setTableData([]);
+      setTotalCount(0);
+      setTotalPages(0);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="relative min-h-screen h-full w-full bg-[url('/images/home.jpg')] bg-cover bg-center pt-10 px-6">
+      {/* Overlay */}
+      <div className="absolute inset-0 bg-black/70"></div>
+
+      <div className="relative z-10 text-white py-6">
+        <section>
+          <div className="relative flex justify-between backdrop-blur-xl bg-white/10 rounded-3xl p-4 border border-white/20 shadow-2xl">
+            <span>User Management</span>
+
+            <div className="flex items-center gap-3">
+              <div className="relative">
+                <Search
+                  size={14}
+                  className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400"
+                />
+                <input
+                  type="text"
+                  placeholder="Search users..."
+                  className="w-40 pl-7 pr-2 py-1 border border-gray-300 rounded-md text-sm 
+                 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+
+              <button className="flex items-center gap-1 px-2 py-1 backdrop-blur-xl bg-white/10 text-white rounded-md text-xs hover:bg-white/65 hover:text-black cursor-pointer transition-all duration-300">
+                <Plus size={14} />
+                Add User
+              </button>
+            </div>
+          </div>
+
+          {/* Users Table */}
+          <div className="mt-6 backdrop-blur-xl bg-white/10 rounded-3xl p-4 border border-white/20 shadow-2xl overflow-x-auto">
+            <table className="w-full text-left text-sm text-white">
+              <thead>
+                <tr className="border-b border-white/20 text-gray-200">
+                  <th className="py-3 px-2">Name</th>
+                  <th className="py-3 px-2">Email</th>
+                  <th className="py-3 px-2">Role</th>
+                  <th className="py-3 px-2">Status</th>
+                  <th className="py-3 px-2 text-right">Actions</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                <tr className="border-b border-white/10 hover:bg-white/5 transition">
+                  {/* <td className="py-2 px-2">John Doe</td> */}
+                  <td className="py-2 px-2">
+                    <div className="flex items-center gap-1">
+                      <div className="w-8 h-8 rounded-full bg-red-200" />
+                      <div className="flex flex-col">
+                        <span>John Doe</span>
+                        {/* <span className="text-[9px]">Jjohn@example.com</span> */}
+                      </div>
+                    </div>
+                  </td>
+                  <td className="py-2 px-2">john@example.com</td>
+                  <td className="py-2 px-2">Admin</td>
+                  <td className="py-2 px-2">
+                    <span className="px-2 py-1 text-xs bg-green-600/40 rounded-full">
+                      Active
+                    </span>
+                  </td>
+                  <td className="text-right px-2">
+                    <div className="flex items-center justify-end gap-2">
+                      <button className="flex items-center justify-center backdrop-blur-xl bg-white/10 hover:bg-white/65 rounded-full p-1.5 cursor-pointer  text-blue-300 hover:text-blue-400 text-xs">
+                        <Eye size={12} />
+                      </button>
+                      <button className="flex items-center justify-center backdrop-blur-xl bg-white/10 hover:bg-white/65 rounded-full p-1.5 cursor-pointer  text-blue-300 hover:text-blue-400 text-xs">
+                        <SquarePen size={12} />
+                      </button>
+                      <button className="flex items-center justify-center backdrop-blur-xl bg-white/10 hover:bg-white/65 rounded-full p-1.5 cursor-pointer  text-blue-300 hover:text-blue-400 text-xs">
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+
+                <tr className="border-b border-white/10 hover:bg-white/5 transition">
+                  <td className="py-2 px-2">Jane Smith</td>
+                  <td className="py-2 px-2">jane@example.com</td>
+                  <td className="py-2 px-2">User</td>
+                  <td className="py-2 px-2">
+                    <span className="px-2 py-1 text-xs bg-red-600/40 rounded-full">
+                      Inactive
+                    </span>
+                  </td>
+                  <td className="py-2 px-2 text-right">
+                    <button className="text-blue-300 hover:text-blue-400 text-xs">
+                      Edit
+                    </button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+    </div>
+  );
+};
+
+export default UserManagement;
+
+data
+: 
+Array(2)
+0
+: 
+{id: 1003, email: 'allenbrownkane@gmail.com', firstName: 'Allen', lastName: 'Kane', role: 'Manager', …}
+1
+: 
+{id: 3, email: 'tonystoryemail@gmail.com', firstName: 'Tony', lastName: 'Story', role: 'Admin', …}
+length
+: 
+2
+[[Prototype]]
+: 
+Array(0)
+errors
+: 
+null
+hasNext
+: 
+false
+hasPrevious
+: 
+false
+message
+: 
+"Retrieved 2 of 2 users"
+pageNumber
+: 
+1
+pageSize
+: 
+10
+success
+: 
+true
+totalCount
+: 
+2
+totalPages
+: 
+1
+
+

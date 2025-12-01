@@ -1,120 +1,169 @@
-using HotelManagement.Auth.DTOs;
+using HotelManagement.Auth.Data;
 using HotelManagement.Auth.Interfaces;
-using HotelManagement.Auth.Models;
+using HotelManagement.Auth.Services;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
-using System.Linq.Expressions;
+using Microsoft.IdentityModel.Tokens;
+using Microsoft.OpenApi.Models;
+using System.Text;
 
-namespace HotelManagement.Auth.Services
+var builder = WebApplication.CreateBuilder(args);
+
+// Add services to the container
+builder.Services.AddControllers();
+builder.Services.AddEndpointsApiExplorer();
+
+// ==========================================
+// JWT AUTHENTICATION CONFIGURATION
+// ==========================================
+
+var jwtSettings = builder.Configuration.GetSection("JwtSettings");
+var secretKey = jwtSettings["SecretKey"];
+
+builder.Services.AddAuthentication(options =>
 {
-    // Add this method to your existing AuthService class
-
-    public async Task<PaginatedResponse<UserDTO>> GetFilteredUsersAsync(UserFilterDTO filter)
+    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+})
+.AddJwtBearer(options =>
+{
+    options.TokenValidationParameters = new TokenValidationParameters
     {
-        try
+        ValidateIssuer = true,
+        ValidateAudience = true,
+        ValidateLifetime = true,
+        ValidateIssuerSigningKey = true,
+        ValidIssuer = jwtSettings["Issuer"],
+        ValidAudience = jwtSettings["Audience"],
+        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secretKey!)),
+        ClockSkew = TimeSpan.Zero // Remove default 5 minute clock skew
+    };
+
+    // Optional: Add event handlers for debugging
+    options.Events = new JwtBearerEvents
+    {
+        OnAuthenticationFailed = context =>
         {
-            var query = _context.Users.AsNoTracking().AsQueryable();
+            Console.WriteLine($"Authentication failed: {context.Exception.Message}");
+            return Task.CompletedTask;
+        },
+        OnTokenValidated = context =>
+        {
+            Console.WriteLine($"Token validated for: {context.Principal?.Identity?.Name}");
+            return Task.CompletedTask;
+        },
+        OnChallenge = context =>
+        {
+            Console.WriteLine($"OnChallenge error: {context.Error}, {context.ErrorDescription}");
+            return Task.CompletedTask;
+        }
+    };
+});
 
-            // Apply search filter
-            if (!string.IsNullOrWhiteSpace(filter.SearchTerm))
+// ==========================================
+// AUTHORIZATION
+// ==========================================
+
+builder.Services.AddAuthorization();
+
+// ==========================================
+// SWAGGER CONFIGURATION WITH JWT
+// ==========================================
+
+builder.Services.AddSwaggerGen(c =>
+{
+    c.SwaggerDoc("v1", new OpenApiInfo
+    {
+        Title = "Hotel Management Auth API",
+        Version = "v1",
+        Description = "Authentication and Authorization API for Hotel Management System"
+    });
+
+    // Add JWT Authentication to Swagger
+    c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    {
+        Description = "JWT Authorization header using the Bearer scheme. Enter 'Bearer' [space] and then your token in the text input below.\n\nExample: \"Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...\"",
+        Name = "Authorization",
+        In = ParameterLocation.Header,
+        Type = SecuritySchemeType.ApiKey,
+        Scheme = "Bearer",
+        BearerFormat = "JWT"
+    });
+
+    c.AddSecurityRequirement(new OpenApiSecurityRequirement
+    {
+        {
+            new OpenApiSecurityScheme
             {
-                var searchTerm = filter.SearchTerm.ToLower();
-                query = query.Where(u =>
-                    u.Email.ToLower().Contains(searchTerm) ||
-                    u.FirstName.ToLower().Contains(searchTerm) ||
-                    u.LastName.ToLower().Contains(searchTerm));
-            }
-
-            // Apply role filter
-            if (!string.IsNullOrWhiteSpace(filter.Role))
-            {
-                query = query.Where(u => u.Role.ToLower() == filter.Role.ToLower());
-            }
-
-            // Apply active status filter
-            if (filter.IsActive.HasValue)
-            {
-                query = query.Where(u => u.IsActive == filter.IsActive.Value);
-            }
-
-            // Apply created date filters
-            if (filter.CreatedAfter.HasValue)
-            {
-                query = query.Where(u => u.CreatedAt >= filter.CreatedAfter.Value);
-            }
-
-            if (filter.CreatedBefore.HasValue)
-            {
-                query = query.Where(u => u.CreatedAt <= filter.CreatedBefore.Value);
-            }
-
-            // Apply last login filters
-            if (filter.LastLoginAfter.HasValue)
-            {
-                query = query.Where(u => u.LastLoginAt.HasValue && u.LastLoginAt >= filter.LastLoginAfter.Value);
-            }
-
-            if (filter.LastLoginBefore.HasValue)
-            {
-                query = query.Where(u => u.LastLoginAt.HasValue && u.LastLoginAt <= filter.LastLoginBefore.Value);
-            }
-
-            // Get total count before pagination
-            var totalCount = await query.CountAsync();
-
-            // Apply sorting
-            query = ApplySorting(query, filter.SortBy, filter.SortOrder);
-
-            // Apply pagination
-            query = query
-                .Skip((filter.PageNumber - 1) * filter.PageSize)
-                .Take(filter.PageSize);
-
-            // Execute query and map to DTOs
-            var users = await query
-                .Select(u => new UserDTO
+                Reference = new OpenApiReference
                 {
-                    Id = u.Id,
-                    Email = u.Email,
-                    FirstName = u.FirstName,
-                    LastName = u.LastName,
-                    Role = u.Role,
-                    IsActive = u.IsActive,
-                    CreatedAt = u.CreatedAt,
-                    LastLoginAt = u.LastLoginAt
-                })
-                .ToListAsync();
-
-            return PaginatedResponse<UserDTO>.SuccessResponse(
-                users,
-                totalCount,
-                filter.PageNumber,
-                filter.PageSize,
-                $"Retrieved {users.Count} of {totalCount} users"
-            );
+                    Type = ReferenceType.SecurityScheme,
+                    Id = "Bearer"
+                }
+            },
+            Array.Empty<string>()
         }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error retrieving filtered users");
-            return PaginatedResponse<UserDTO>.FailureResponse(
-                "An error occurred while retrieving users",
-                new List<string> { ex.Message }
-            );
-        }
-    }
+    });
+});
 
-    private IQueryable<User> ApplySorting(IQueryable<User> query, string? sortBy, string sortOrder)
+// ==========================================
+// DATABASE CONTEXT
+// ==========================================
+
+builder.Services.AddDbContext<ApplicationDbContext>(options =>
+    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+
+// ==========================================
+// DEPENDENCY INJECTION
+// ==========================================
+
+builder.Services.AddScoped<IAuthService, AuthService>();
+builder.Services.AddScoped<ITokenService, TokenService>();
+
+// ==========================================
+// CORS CONFIGURATION
+// ==========================================
+
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowAll", policy =>
     {
-        var isDescending = sortOrder.ToLower() == "desc";
+        policy.AllowAnyOrigin()
+              .AllowAnyMethod()
+              .AllowAnyHeader();
+    });
+});
 
-        return sortBy?.ToLower() switch
-        {
-            "email" => isDescending ? query.OrderByDescending(u => u.Email) : query.OrderBy(u => u.Email),
-            "firstname" => isDescending ? query.OrderByDescending(u => u.FirstName) : query.OrderBy(u => u.FirstName),
-            "lastname" => isDescending ? query.OrderByDescending(u => u.LastName) : query.OrderBy(u => u.LastName),
-            "role" => isDescending ? query.OrderByDescending(u => u.Role) : query.OrderBy(u => u.Role),
-            "createdat" => isDescending ? query.OrderByDescending(u => u.CreatedAt) : query.OrderBy(u => u.CreatedAt),
-            "lastloginat" => isDescending ? query.OrderByDescending(u => u.LastLoginAt) : query.OrderBy(u => u.LastLoginAt),
-            _ => query.OrderByDescending(u => u.CreatedAt) // Default sort by CreatedAt descending
-        };
-    }
+var app = builder.Build();
+
+// ==========================================
+// MIDDLEWARE PIPELINE
+// CRITICAL: ORDER MATTERS!
+// ==========================================
+
+// 1. Swagger (Development only)
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI(c =>
+    {
+        c.SwaggerEndpoint("/swagger/v1/swagger.json", "Hotel Management Auth API v1");
+    });
 }
+
+// 2. HTTPS Redirection
+app.UseHttpsRedirection();
+
+// 3. CORS (must be before authentication/authorization)
+app.UseCors("AllowAll");
+
+// 4. Authentication (MUST come before Authorization)
+app.UseAuthentication();
+
+// 5. Authorization (MUST come after Authentication)
+app.UseAuthorization();
+
+// 6. Map Controllers
+app.MapControllers();
+
+app.Run();
